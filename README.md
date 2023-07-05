@@ -1,21 +1,53 @@
 # kernel_programming
-## Getting Started
+Codes of linux kernel modules
+
+![Static Badge](https://img.shields.io/badge/linux-6.2.0-EABE41)
+![Static Badge](https://img.shields.io/badge/ubuntu-18.0.4-C24F29)
+![Static Badge](https://img.shields.io/badge/llvm-11.1.0-blue)
+
+## 1) Installation
+### Linux
+```sh
+apt-get install build-essential libncurses5 libncurses5-dev bin86 kernel-package libssl-dev bison flex libelf-dev
+
+git clone --depth 1 --branch v6.2 git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+
+cd linux
+make defconfig
+make -j
+make modules
+make install
+make modules_install
+reboot
+```
+
+### Linter: clang-format
+```sh
+wget https://apt.llvm.org/llvm.sh
+chmod +x llvm.sh
+sudo ./llvm.sh 11
+```
+
+## 2) Execute Kernel Module
 ### 1. build
 ```sh
 make NAME=alloc_page
 ```
-
-### 2. Load the module
+### 2. load
 ```sh
 insmod alloc_page.ko
 ```
-
-### 3. Unload the module
+### 3. unload
 ```sh
 rmmod alloc_page
 ```
-
-### 4. Clean
+### 4. clean
 ```sh
 make clean
+```
+
+## 3) Contribution Guide
+### Lint
+```sh
+clang-format-11 -i alloc_page.c
 ```
