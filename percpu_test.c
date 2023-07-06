@@ -50,7 +50,7 @@ static int __init start_module(void)
 	for (i = 0; i < 1000000; i++) {
 		ptr = get_cpu_ptr(my_percpu_dynamic); // preemption disable
 		*ptr += 1;
-		put_cpu_ptr(my_percpu_dynamic); // preemption disable
+		put_cpu_ptr(my_percpu_dynamic); // preemption enable
 	}
 	return 0;
 }
