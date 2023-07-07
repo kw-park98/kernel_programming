@@ -31,7 +31,8 @@ sudo ./llvm.sh 11
 ## 2) Execute Kernel Module
 ### 1. build
 ```sh
-make NAME=alloc_page
+cd alloc_page
+make
 ```
 ### 2. load
 ```sh
@@ -47,7 +48,23 @@ make clean
 ```
 
 ## 3) Contribution Guide
-### Lint
+### 1. prepare
 ```sh
-clang-format-11 -i alloc_page.c
+mkdir {module}
+cd {module}
+```
+### 2. code
+```sh
+vi {module}.c
+```
+### 3. lint
+```sh
+clang-format-11 -i {module}.c
+```
+### 4. git
+```sh
+git branch -B {module}
+git add .
+git commit -m "[mod|doc|...]({module}): description"
+git push origin {module}
 ```
