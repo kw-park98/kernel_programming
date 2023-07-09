@@ -4,9 +4,7 @@
  * worker.c - worker for benchmark.c
  */
 
-#include <linux/module.h>
 #include <linux/atomic.h>
-#include <linux/kthread.h>
 #include "worker.h"
 
 /**

@@ -8,7 +8,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/kthread.h>
-#include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include "worker.h"
