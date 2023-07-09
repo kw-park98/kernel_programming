@@ -35,7 +35,7 @@ void worker_setup(void)
  * worker_routine() - routine per worker thread
  *
  * The benchmark checks how many times this function is called during
- * specific duration. And worker threads call this funciton  in parallel.
+ * specific duration. And worker threads call this function  in parallel.
  *
  * Context: Thread context. It is called by worker threads many times.
  */
