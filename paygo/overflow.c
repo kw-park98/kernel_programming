@@ -7,10 +7,9 @@
 #include "ds_paygo_entry.h"
 #include "ds_overflow.h"
 
-
+DEFINE_SPINLOCK(hlist_lock);
 DEFINE_HASHTABLE(obj_to_list_map, 8);
 
-struct paygo_overflow_list *create_overflow_list_for_obj(void *obj);
 struct paygo_overflow_list *find_overflow_list_for_obj(void *obj);
 
 void put_entry(struct paygo_entry *entry);
@@ -28,43 +27,39 @@ static void __exit end_module(void)
 	pr_info("overflow module removed\n");
 }
 
-struct paygo_overflow_list *create_overflow_list_for_obj(void *obj)
+struct paygo_overflow_list *find_overflow_list_for_obj(void *obj)
 {
-	struct perobj_overflow_list *mapping;	
+	unsigned long flags;
+	struct perobj_overflow_list *mapping;
+	spin_lock_irqsave(&hlist_lock, flags);
+	hash_for_each_possible(obj_to_list_map, mapping, hnode, (unsigned long)obj) {
+		if (mapping->obj == obj) {
+			spin_unlock_irqrestore(&hlist_lock, flags);
+			return &mapping->overflow;
+		}
+	}
 	
 	mapping = kmalloc(sizeof(struct perobj_overflow_list), GFP_KERNEL);
-	if(mapping == NULL)
-		return NULL;		
-
+	if (mapping == NULL)
+		return NULL;
+	
 	mapping->obj = obj;
 	spin_lock_init(&mapping->overflow.lock);
 	INIT_LIST_HEAD(&mapping->overflow.head);
 	
-  hash_add(obj_to_list_map, &mapping->hnode, (unsigned long)obj);
-	
+	hash_add(obj_to_list_map, &mapping->hnode, (unsigned long)obj);
+	spin_unlock_irqrestore(&hlist_lock, flags);
 	return &mapping->overflow;
-}
-
-struct paygo_overflow_list *find_overflow_list_for_obj(void *obj)
-{
-	struct perobj_overflow_list *mapping;
-	hash_for_each_possible(obj_to_list_map, mapping, hnode, (unsigned long)obj) {
-		if (mapping->obj == obj)
-			return &mapping->overflow;
-	}
-	return create_overflow_list_for_obj(obj);
 }
 
 
 /*
  * put_entry
  *
- * PREEMPTION DISABLE BEFORE CALL 
- *
  * @overflow_list: overflow list of the entry's obj
  * @entry: pointer of the entry 
  *
- *
+ * Context: Preemtion disabled context
  */
 void put_entry(struct paygo_entry *entry) 
 {
@@ -86,10 +81,10 @@ EXPORT_SYMBOL(put_entry);
 /**
  * get_entry
  *
- * PREEMPTION DISABLE BEFORE CALL 
- *
  * @overflow_list: overflow list of the obj
  * @obj: pointer of the object
+ * 
+ * Context: Preemtion disabled context
  *
  * Return: pointer of the entry which has the argument's obj. if there is not in list, then NULL.
  */
