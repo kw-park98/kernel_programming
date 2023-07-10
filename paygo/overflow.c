@@ -12,8 +12,10 @@ DEFINE_HASHTABLE(obj_to_list_map, 8);
 
 struct paygo_overflow_list *find_overflow_list_for_obj(void *obj);
 
+// APIs for other part
 void put_entry(struct paygo_entry *entry);
 struct paygo_entry *get_entry(void *obj);
+void traverse(void *obj);
 
 static int __init start_module(void)
 {
@@ -108,6 +110,31 @@ struct paygo_entry *get_entry(void *obj)
 	return ret_entry;
 }
 EXPORT_SYMBOL(get_entry);
+
+
+/**
+ * traverse
+ *
+ * @obj: pointer of the object
+ * 
+ * traverse and print about the overflow list whose obj is the same with the argument.
+ */
+void traverse(void *obj)
+{
+	int count;
+	struct paygo_entry *entry;
+	struct paygo_overflow_list *overflow_list;
+	
+	count = 0;
+	overflow_list = find_overflow_list_for_obj(obj);		
+	list_for_each_entry(entry, &overflow_list->head, list) {
+		count += 1;
+		pr_info("CPU: %d, obj: %p, local: %d, anchor: %d\n", entry->cpu, entry->obj, entry->local_count, entry->anchor_count);
+	}
+	
+	pr_info("total entries in the list: %d\n", count);
+}
+EXPORT_SYMBOL(traverse);
 
 MODULE_AUTHOR("Kunwook Park");
 

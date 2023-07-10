@@ -13,10 +13,10 @@
 
 #define NKTHREAD 6
 
-extern struct paygo_entry *create_entry(void *obj);
-extern struct paygo_overflow_list overflow;
 extern void put_entry(struct paygo_entry *entry);
 extern struct paygo_entry *get_entry(void *obj);
+
+extern void traverse(void *obj);
 
 //thread function
 void *ptr;
@@ -39,8 +39,8 @@ static int __init start_module(void) {
     data = kmalloc(sizeof(struct kthread_data), GFP_KERNEL);
     {
       data->kthread_id = i;
-      data->start = i*3;
-      data->end = (i+1)*3;
+      data->start = i*30;
+      data->end = (i+1)*30;
     }
     kthreads[i] = kthread_run(put_fn, (void *)data, "kthread%d", i);
     if(IS_ERR(kthreads[i])){
@@ -52,6 +52,7 @@ static int __init start_module(void) {
 }
 
 static void __exit end_module(void) {
+	traverse(ptr);	
 	pr_info("overflow test module removed!\n");
 }
 
@@ -66,7 +67,6 @@ static int put_fn(void *data)
   for(i=kdata->start; i<kdata->end; i++) {
     entry = kmalloc(sizeof(struct paygo_entry), GFP_KERNEL);
     cpu = get_cpu();
-    put_cpu();
     {
       entry->obj = ptr;
       entry->local_count = i;
@@ -74,6 +74,7 @@ static int put_fn(void *data)
       entry->cpu = cpu;
     }
     put_entry(entry);
+    put_cpu();
     msleep(1);
   }
   pr_info("thread%d ENDED!\n", kdata->kthread_id);
