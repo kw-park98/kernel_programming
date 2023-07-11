@@ -12,10 +12,9 @@
 
 
 #define NKTHREAD 6
-
+#define JOBS 100
 extern void put_entry(struct paygo_entry *entry);
 extern struct paygo_entry *get_entry(void *obj);
-
 extern void traverse(void *obj);
 
 //thread function
@@ -39,8 +38,8 @@ static int __init start_module(void) {
     data = kmalloc(sizeof(struct kthread_data), GFP_KERNEL);
     {
       data->kthread_id = i;
-      data->start = i*30;
-      data->end = (i+1)*30;
+      data->start = i*JOBS;
+      data->end = (i+1)*JOBS;
     }
     kthreads[i] = kthread_run(put_fn, (void *)data, "kthread%d", i);
     if(IS_ERR(kthreads[i])){
@@ -79,6 +78,11 @@ static int put_fn(void *data)
   }
   pr_info("thread%d ENDED!\n", kdata->kthread_id);
   return 0;
+}
+
+static int get_fn(void *data)
+{
+
 }
 
 MODULE_AUTHOR("Kunwook Park");

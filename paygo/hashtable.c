@@ -13,7 +13,6 @@ DEFINE_PER_CPU(struct paygo_hashtable, pcp_hashtable);
 
 unsigned int hash_function(void *obj);
 struct paygo_entry *find_hash(int cpu, void *obj); 
-int push_entry(struct paygo_entry *new_entry);
 
 static int __init start_module(void)
 {
@@ -53,37 +52,10 @@ unsigned int hash_function(void *obj)
 	return hash % TSIZE;
 }
 
-
-///**
-// * push_hash
-// *
-// * PREEMPTION DISABLE BEFORE CALL (cpu = get_cpu())
-// * 
-// * @cpu: cpu of the current task
-// * @entry: pointer of the entry which will be pushed
-// *
-// */
-//int push_hash(int cpu, struct paygo_entry *entry)
-//{
-//	unsigned int hindex;
-//	struct paygo_hashtable *htable;
-//	hindex = hash_function(entry->obj);
-//	
-//	htable = &per_cpu(pcp_hashtable, cpu);	
-//	if(htable->entries[hindex].obj != NULL) {
-//		struct paygo_entry *overflow_entry;
-//		overflow_entry = kmalloc(sizeof(struct paygo_entry), GFP_KERNEL);
-//		*overflow_entry = htable->entries[hindex];	
-//		put_entry(&overflow, overflow_entry);
-//	}	
-//	htable->entries[hindex] = *entry; 
-//	return 0;	
-//}
-
 /**
  * find_hash
  *
- * PREEMPTION DISABLE BEFORE CALL (cpu = get_cpu())
+ * Context: Preemtion disabled context
  * 
  * @cpu: cpu of the current task
  * @obj: pointer of the object
@@ -106,19 +78,29 @@ struct paygo_entry *find_hash(int cpu, void *obj)
 		return entry;
 
 	overflow_entry = &(htable->entries[hindex]);
+	if(overflow_entry->obj != NULL) {
+		put_entry(overflow_entry);
+	}
 	// if htable doesn't have the entry
 	// then we need to find the overflow list.
 	entry = get_entry(obj);	
 	if(entry) {
-		if(overflow_entry->obj != NULL) {
-			put_entry(&overflow, overflow_entry);
-		}
 		htable->entries[hindex] = *entry;
 		kfree(entry);
 		entry = &(htable->entries[hindex]);
-	}			
+	}
+	else {
+		entry = &(htable->entries[hindex]);	
+		{
+			entry->obj = obj;
+			entry->cpu = cpu;
+			entry->anchor_count = 0;
+			entry->local_count = 0;
+		}
+	}
 	return entry;
 }
+EXPORT_SYMBOL(find_hash);
 
 
 MODULE_AUTHOR("Kunwook Park");
