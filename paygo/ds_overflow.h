@@ -10,7 +10,6 @@ struct paygo_overflow_list {
 	struct list_head head;
 };
 
-
 struct perobj_overflow_list {
 	void *obj;
 	struct paygo_overflow_list overflow;

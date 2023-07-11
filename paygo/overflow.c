@@ -20,7 +20,7 @@ void traverse(void *obj);
 static int __init start_module(void)
 {
 	pr_info("overflow module loaded\n");
-	pr_info("size of paygo_entry: %lu\n", sizeof(struct paygo_entry)); 
+	pr_info("size of paygo_entry: %lu\n", sizeof(struct paygo_entry));
 	return 0;
 }
 
@@ -34,26 +34,26 @@ struct paygo_overflow_list *find_overflow_list_for_obj(void *obj)
 	unsigned long flags;
 	struct perobj_overflow_list *mapping;
 	spin_lock_irqsave(&hlist_lock, flags);
-	hash_for_each_possible(obj_to_list_map, mapping, hnode, (unsigned long)obj) {
+	hash_for_each_possible(obj_to_list_map, mapping, hnode,
+			       (unsigned long)obj) {
 		if (mapping->obj == obj) {
 			spin_unlock_irqrestore(&hlist_lock, flags);
 			return &mapping->overflow;
 		}
 	}
-	
+
 	mapping = kmalloc(sizeof(struct perobj_overflow_list), GFP_KERNEL);
 	if (mapping == NULL)
 		return NULL;
-	
+
 	mapping->obj = obj;
 	spin_lock_init(&mapping->overflow.lock);
 	INIT_LIST_HEAD(&mapping->overflow.head);
-	
+
 	hash_add(obj_to_list_map, &mapping->hnode, (unsigned long)obj);
 	spin_unlock_irqrestore(&hlist_lock, flags);
 	return &mapping->overflow;
 }
-
 
 /*
  * put_entry
@@ -63,13 +63,13 @@ struct paygo_overflow_list *find_overflow_list_for_obj(void *obj)
  *
  * Context: Preemtion disabled context
  */
-void put_entry(struct paygo_entry *entry) 
+void put_entry(struct paygo_entry *entry)
 {
 	unsigned long flags;
 	struct paygo_entry *new_entry;
-  struct paygo_overflow_list *overflow_list;
+	struct paygo_overflow_list *overflow_list;
 
-  overflow_list = find_overflow_list_for_obj(entry->obj);
+	overflow_list = find_overflow_list_for_obj(entry->obj);
 	new_entry = kmalloc(sizeof(struct paygo_entry), GFP_KERNEL);
 	*new_entry = *entry;
 
@@ -78,7 +78,6 @@ void put_entry(struct paygo_entry *entry)
 	spin_unlock_irqrestore(&overflow_list->lock, flags);
 }
 EXPORT_SYMBOL(put_entry);
-
 
 /**
  * get_entry
@@ -100,8 +99,8 @@ struct paygo_entry *get_entry(void *obj)
 	overflow_list = find_overflow_list_for_obj(obj);
 	spin_lock_irqsave(&overflow_list->lock, flags);
 	list_for_each_entry(entry, &overflow_list->head, list) {
-		if(entry->obj == obj && entry->cpu == smp_processor_id()) {
-			list_del(&entry->list); 
+		if (entry->obj == obj && entry->cpu == smp_processor_id()) {
+			list_del(&entry->list);
 			ret_entry = entry;
 			break;
 		}
@@ -110,7 +109,6 @@ struct paygo_entry *get_entry(void *obj)
 	return ret_entry;
 }
 EXPORT_SYMBOL(get_entry);
-
 
 /**
  * traverse
@@ -124,14 +122,15 @@ void traverse(void *obj)
 	int count;
 	struct paygo_entry *entry;
 	struct paygo_overflow_list *overflow_list;
-	
+
 	count = 0;
-	overflow_list = find_overflow_list_for_obj(obj);		
+	overflow_list = find_overflow_list_for_obj(obj);
 	list_for_each_entry(entry, &overflow_list->head, list) {
 		count += 1;
-		pr_info("CPU: %d, obj: %p, local: %d, anchor: %d\n", entry->cpu, entry->obj, entry->local_count, entry->anchor_count);
+		pr_info("CPU: %d, obj: %p, local: %d, anchor: %d\n", entry->cpu,
+			entry->obj, entry->local_count, entry->anchor_count);
 	}
-	
+
 	pr_info("total entries in the list: %d\n", count);
 }
 EXPORT_SYMBOL(traverse);

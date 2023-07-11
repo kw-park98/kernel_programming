@@ -12,5 +12,4 @@ struct __attribute__((aligned(64))) paygo_entry {
 	int cpu;
 };
 
-
 #endif // DS_PAYGO_ENTRY_H__
