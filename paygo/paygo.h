@@ -14,7 +14,9 @@
 #include <linux/delay.h>
 
 #include <linux/slab.h>
-#include <asm/atomic.h> 
+#include <asm/atomic.h>
+
+#define TABLESIZE 16
 
 /* Functions
 
@@ -31,9 +33,9 @@ These functions are used in hashtable.
 -------------------------------------------------------
 These functions are APIs for reference counting.
 
-5. ref (not yet)
-6. unref (not yet)
-7. read-all (not yet)
+5. paygo_ref
+6. paygo_unref (not yet)
+7. paygo_read (not yet)
 -------------------------------------------------------
 test function
 
@@ -41,26 +43,24 @@ test function
 */
 
 
-#define TABLESIZE 64
-
 struct __attribute__((aligned(64))) paygo_entry {
 	void *obj;
 	int local_counter;
-	atomic_t anchor_counter;	
+	atomic_t anchor_counter;
 	struct list_head list;
 };
 
-struct overflow {		
+struct overflow {
 	spinlock_t lock;
-	struct list_head head;		
+	struct list_head head;
 };
 
 struct paygo {
-	struct paygo_entry entries[TABLESIZE]; 
-	struct overflow overflow_lists[TABLESIZE];	
+	struct paygo_entry entries[TABLESIZE];
+	struct overflow overflow_lists[TABLESIZE];
 };
 
-DEFINE_PER_CPU(struct paygo*, paygo_table_ptr);
+DEFINE_PER_CPU(struct paygo *, paygo_table_ptr);
 
 /**
  * init_paygo_table
@@ -100,7 +100,19 @@ int push_hash(void *obj);
  * Push paygo entry into the per-cpu hashtable.
  *
  */
-struct paygo_entry* find_hash(void *obj);
+struct paygo_entry *find_hash(void *obj);
+
+/**
+ * ref
+ *
+ * @obj: pointer of the object
+ *
+ * Return: 0 for success
+ *
+ * add reference count of the object.
+ *
+ */
+int paygo_ref(void *obj);
 
 /**
  * traverse_paygo
@@ -111,7 +123,5 @@ struct paygo_entry* find_hash(void *obj);
  *
  */
 void traverse_paygo(void);
-
-
 
 #endif // __PAYGO_H__
