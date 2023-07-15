@@ -14,14 +14,13 @@ static int __init start_module(void)
 		thread_datas[i].thread_id = i;
 	}
 
-
 	init_paygo_table();
 
 	for(i=0; i<NTHREAD; i++) {
-		thread[i] = kthread_run(thread_fn, &thread_datas[i], "my_kthread%d", i);	
-		if (IS_ERR(thread[i])) {
+		threads[i] = kthread_run(thread_fn, &thread_datas[i], "my_kthread%d", i);	
+		if (IS_ERR(threads[i])) {
 			printk(KERN_ERR "Failed to create counter thread.\n");
-			return PTR_ERR(thread[i]);
+			return PTR_ERR(threads[i]);
 		}
 	}
 
@@ -32,9 +31,9 @@ static void __exit end_module(void)
 {
 	int i;
 	for(i=0; i<NTHREAD; i++) {
-		if(thread[i]) {
-			kthread_stop(thread[i]);
-			thread[i] = NULL;
+		if(threads[i]) {
+			kthread_stop(threads[i]);
+			threads[i] = NULL;
 		}
 	} 
 	msleep(2000);

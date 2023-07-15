@@ -2,12 +2,13 @@
 
 
 # Ensure a module name was provided
-if [ -z "$1" ]; then
-    echo "Usage: $0 <module-name>"
-    exit 1
-fi
+#if [ -z "$1" ]; then
+#    echo "Usage: $0 <module-name>"
+#    exit 1
+#fi
 
-NAME=${1%.c}
+#NAME=${1%.c}
+NAME="paygo"
 
 # 1. make NAME=name
 make NAME=$NAME

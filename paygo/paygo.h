@@ -23,15 +23,21 @@
 
 // for thread
 
+struct perprocess_info {
+	struct list_head list;
+};
+
 struct thread_data {
 	int thread_id;
+	struct perprocess_info anchor_info;		
 };
 
 #define NTHREAD 5
 static int thread_fn(void *data);
-static struct task_struct *thread[NTHREAD];
-static struct thread_data thread_datas[NTHREAD];
+static struct task_struct *threads[NTHREAD];
 
+// This is the data structure that will be used in place of tast struct.
+static struct thread_data thread_datas[NTHREAD];
 
 static int thread_ops[NTHREAD];
 
@@ -55,12 +61,14 @@ These functions are used in hashtable.
 These functions are APIs for reference counting.
 
 5. paygo_ref
-6. paygo_unref (not yet)
+6. paygo_unref (~ing until 7/16 (maybe) )
+
 7. paygo_read (not yet)
 -------------------------------------------------------
 test function
 
 7. traverse_paygo
+-------------------------------------------------------
 */
 
 
@@ -118,22 +126,34 @@ int push_hash(void *obj);
  *
  * Return: pointer of the paygo entry from the per-cpu hashtable.
  *
- * Push paygo entry into the per-cpu hashtable.
+ * find paygo entry from the per-cpu hashtable.
  *
  */
 struct paygo_entry *find_hash(void *obj);
 
 /**
- * ref
+ * paygo_ref
  *
  * @obj: pointer of the object
  *
  * Return: 0 for success
  *
- * add reference count of the object.
+ * increment reference count of the object.
  *
  */
 int paygo_ref(void *obj);
+
+/**
+ * paygo_unref
+ *
+ * @obj: pointer of the object
+ *
+ * Return: 0 for success
+ *
+ * decrement reference count of the object.
+ *
+ */
+int paygo_unref(void *obj);
 
 /**
  * traverse_paygo
