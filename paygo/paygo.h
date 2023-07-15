@@ -15,8 +15,29 @@
 
 #include <linux/slab.h>
 #include <asm/atomic.h>
+#include <linux/hash.h>
 
-#define TABLESIZE 16
+#define TABLESIZE 32
+#define HASHSHIFT 11
+
+
+// for thread
+
+struct thread_data {
+	int thread_id;
+};
+
+#define NTHREAD 3
+static int thread_fn(void *data);
+static struct task_struct *thread[NTHREAD];
+static struct thread_data thread_datas[NTHREAD];
+
+
+static int thread_did[NTHREAD];
+
+#define NOBJS 300
+static void** objs;
+//
 
 /* Functions
 
@@ -76,7 +97,7 @@ void init_paygo_table(void);
  *
  * Return: index of the object in the PCP-hashtable
  */
-unsigned int hash_function(void *obj);
+unsigned long hash_function(const void *obj);
 
 /**
  * push_hash

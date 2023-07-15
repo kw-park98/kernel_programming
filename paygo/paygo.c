@@ -1,10 +1,5 @@
 #include "paygo.h"
 
-#define NOBJS 10
-
-static void** objs;
-static int thread_fn(void *data);
-static struct task_struct *thread;
 
 static int __init start_module(void)
 {
@@ -15,15 +10,33 @@ static int __init start_module(void)
 	for(i=0; i<NOBJS; i++) {
 		objs[i] = kzalloc(sizeof(void*), GFP_KERNEL);
 	}
+	for(i=0; i<NTHREAD; i++) {
+		thread_datas[i].thread_id = i;
+	}
+
+
 	init_paygo_table();
-	thread = kthread_run(thread_fn, NULL, "my_kthread");
+
+	for(i=0; i<NTHREAD; i++) {
+		thread[i] = kthread_run(thread_fn, &thread_datas[i], "my_kthread%d", i);	
+		if (IS_ERR(thread[i])) {
+			printk(KERN_ERR "Failed to create counter thread.\n");
+			return PTR_ERR(thread[i]);
+		}
+	}
 
 	return 0;
 }
 
 static void __exit end_module(void)
 {
-	kthread_stop(thread);
+	int i;
+	for(i=0; i<NTHREAD; i++) {
+		if(thread[i]) {
+			kthread_stop(thread[i]);
+			thread[i] = NULL;
+		}
+	} 
 	msleep(2000);
 	traverse_paygo();
 	pr_info("paygo module removed!\n");
@@ -54,34 +67,19 @@ void init_paygo_table(void)
 	}
 }
 
-unsigned int hash_function(void *obj)
+unsigned long hash_function(const void *obj)
 {
-/*
-	int i;
-	unsigned int hash;
-	unsigned char *key = (unsigned char *)obj;
-	size_t len = sizeof(obj);
-	for (hash = i = 0; i < len; ++i) {
-		hash += key[i];
-		hash += (hash << 10);
-		hash ^= (hash >> 6);
-	}
-	hash += (hash << 3);
-	hash ^= (hash >> 11);
-	hash += (hash << 15);
-	return hash % TABLESIZE;
-*/
-	unsigned int key;
+	unsigned long ret;
 	unsigned long hash;
-	hash = (unsigned long)obj;
-	key = hash % TABLESIZE;
-	return key;
+	hash = hash_64((unsigned long)obj, HASHSHIFT);
+	ret = hash % TABLESIZE;
+	return ret;
 }
 
 int push_hash(void *obj)
 {
 	unsigned long flags;
-	unsigned int hash;
+	unsigned long hash;
 	struct paygo_entry *entry;
 	struct overflow *ovfl;
 	//struct paygo *p = get_cpu_var(paygo_table_ptr);
@@ -126,7 +124,7 @@ int push_hash(void *obj)
 struct paygo_entry *find_hash(void *obj)
 {
 	unsigned long flags;
-	unsigned int hash;
+	unsigned long hash;
 	struct paygo_entry *entry;
 	struct overflow *ovfl;
 	struct list_head *pos, *n;
@@ -181,7 +179,7 @@ int paygo_ref(void *obj)
 void dec_other_entry(void *obj, int cpu)
 {
 	unsigned long flags;
-	unsigned int hash;
+	unsigned long hash;
 	struct overflow *ovfl;
 	struct list_head *pos, *n;
 	struct paygo *p;
@@ -220,9 +218,13 @@ void traverse_paygo(void)
 	struct list_head *cur;
 	int i;
 	int cpu;
+	int cpu_ops[128];
+	int last_cpu;
 	entry = NULL;
 
 	for_each_possible_cpu(cpu) {
+		last_cpu = cpu;
+		cpu_ops[last_cpu] = 0;
 		p = per_cpu(paygo_table_ptr, cpu);
 		printk(KERN_INFO "CPU %d:\n", cpu);
 
@@ -239,6 +241,10 @@ void traverse_paygo(void)
 				       i, entry->local_counter,
 				       atomic_read(&entry->anchor_counter));
 			}
+			{
+				cpu_ops[last_cpu] += entry->local_counter;
+				cpu_ops[last_cpu] += atomic_read(&entry->anchor_counter);
+			}
 			list_for_each(cur, &p->overflow_lists[i].head) {
 				entry = list_entry(cur, struct paygo_entry,
 						   list);
@@ -246,21 +252,35 @@ void traverse_paygo(void)
 				       "  Overflow entry: obj=%p, local_counter=%d, anchor_counter=%d\n",
 				       entry->obj, entry->local_counter,
 				       atomic_read(&entry->anchor_counter));
+				{
+					cpu_ops[last_cpu] += entry->local_counter;
+					cpu_ops[last_cpu] += atomic_read(&entry->anchor_counter);
+				}
 			}
 		}
+	}
+	cpu_ops[last_cpu+1] = -1;
+	for(i=0; cpu_ops[i] != -1; ++i) {
+		pr_info("CPU[%d]'s operations = %d\n", i, cpu_ops[i]);
+	}
+	for(i=0; i<NTHREAD; ++i) {
+		pr_info("THREAD%d did %d jobs\n", i, thread_did[i]);
 	}
 }
 
 static int thread_fn(void *data)
 {
 	int i;
+	struct thread_data td;
 	i = 0;
+	td = *(struct thread_data *)data;
 	while (!kthread_should_stop()) {
 		paygo_ref(objs[i % NOBJS]);
-		//pr_info("objs[%d] = %p\n", i % NOBJS, objs[i % NOBJS]);
 		i++;
-		msleep(5);
+		msleep(1);
 	}
+	pr_info("thread%d did %d jobs\n", td.thread_id, i);
+	thread_did[td.thread_id] = i;
 	pr_info("thread end!\n");
 	return 0;
 }
