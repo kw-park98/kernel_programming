@@ -27,15 +27,15 @@ struct thread_data {
 	int thread_id;
 };
 
-#define NTHREAD 3
+#define NTHREAD 5
 static int thread_fn(void *data);
 static struct task_struct *thread[NTHREAD];
 static struct thread_data thread_datas[NTHREAD];
 
 
-static int thread_did[NTHREAD];
+static int thread_ops[NTHREAD];
 
-#define NOBJS 300
+#define NOBJS 100
 static void** objs;
 //
 

@@ -220,6 +220,8 @@ void traverse_paygo(void)
 	int cpu;
 	int cpu_ops[128];
 	int last_cpu;
+	int dif_sum;
+
 	entry = NULL;
 
 	for_each_possible_cpu(cpu) {
@@ -259,13 +261,19 @@ void traverse_paygo(void)
 			}
 		}
 	}
+	dif_sum = 0;
 	cpu_ops[last_cpu+1] = -1;
 	for(i=0; cpu_ops[i] != -1; ++i) {
 		pr_info("CPU[%d]'s operations = %d\n", i, cpu_ops[i]);
+		dif_sum += cpu_ops[i];
 	}
 	for(i=0; i<NTHREAD; ++i) {
-		pr_info("THREAD%d did %d jobs\n", i, thread_did[i]);
+		pr_info("THREAD%d did %d jobs\n", i, thread_ops[i]);
+		dif_sum -= thread_ops[i];
 	}
+	
+	pr_info("differences between the sum of CPUs and THREADs = %d\n", dif_sum);
+
 }
 
 static int thread_fn(void *data)
@@ -280,7 +288,7 @@ static int thread_fn(void *data)
 		msleep(1);
 	}
 	pr_info("thread%d did %d jobs\n", td.thread_id, i);
-	thread_did[td.thread_id] = i;
+	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	return 0;
 }
