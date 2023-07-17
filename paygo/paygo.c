@@ -1,16 +1,215 @@
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/percpu.h>
+
+#include <linux/list.h>
+#include <linux/hashtable.h>
+#include <linux/spinlock.h>
+#include <linux/percpu.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
+
+#include <linux/slab.h>
+#include <asm/atomic.h>
+#include <linux/hash.h>
+
 #include "paygo.h"
 
 
+// TODO
+//
+// 1. Do we need to initialize hashtable entry's list every time we create a null entry? ( INIT_LIST_HEAD(&(entry->list)); )
+//
+// 2. Implement paygo_read
+//
+// 3. Precision testing of paygo operations
+//
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// custom number
+
+
+// size of the per-cpu hashtable
+#define TABLESIZE 4
+
+// hash function shift bits
+#define HASHSHIFT 11
+
+// the number of test kthread
+#define NTHREAD 10
+
+// the number of objs to test
+#define NOBJS 20
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// for thread
+struct anchor_info {
+	int cpu;
+	struct list_head list;
+};
+
+struct thread_data {
+	int thread_id;
+	struct list_head anchor_info_list;		
+};
+
+static int thread_fn(void *data);
+static struct task_struct *threads[NTHREAD];
+
+// This is the data structure that will be used in place of tast struct.
+static struct thread_data thread_datas[NTHREAD];
+
+static int thread_ops[NTHREAD];
+
+static void** objs;
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//data structures
+struct __attribute__((aligned(64))) paygo_entry {
+	void *obj;
+	int local_counter;
+	atomic_t anchor_counter;
+	struct list_head list;
+};
+
+struct overflow {
+	spinlock_t lock;
+	struct list_head head;
+};
+
+struct paygo {
+	struct paygo_entry entries[TABLESIZE];
+	struct overflow overflow_lists[TABLESIZE];
+};
+
+DEFINE_PER_CPU(struct paygo *, paygo_table_ptr);
+//////////////////////////////////////////////////////////////////////////////////////////
+// private functions
+
+/*
+-------------------------------------------------------
+These functions are used for setting up.
+
+1. init_paygo_table
+2. hash_function
+-------------------------------------------------------
+These functions are used in hashtable.
+
+3. push_hash 
+4. find_hash
+-------------------------------------------------------
+These functions are used for anchor information to put and get.
+
+5. record_anchor
+6. unrecord_anchor
+-------------------------------------------------------
+This function is used in paygo_unref when decrement other cpu's hashtable entry.
+
+7. dec_other_entry
+-------------------------------------------------------
+test function
+
+8. traverse_paygo
+*/
+
+
+/**
+ * init_paygo_table
+ *
+ * allocate memory for hashtable and initialize the table
+ */
+static void init_paygo_table(void);
+
+/**
+ * hash_function
+ *
+ * @obj: pointer of the object
+ *
+ * Return: index of the object in the PCP-hashtable
+ */
+static unsigned long hash_function(const void *obj);
+
+/**
+ * push_hash
+ *
+ * @obj: pointer of the object
+ *
+ * Return: 0 for success
+ *
+ * Push paygo entry into the per-cpu hashtable.
+ *
+ */
+static int push_hash(void *obj);
+
+/**
+ * find_hash
+ *
+ * @obj: pointer of the object
+ *
+ * Return: pointer of the paygo entry from the per-cpu hashtable.
+ *
+ * Find paygo entry from the per-cpu hashtable.
+ * And delete entry of the hash table when if the hash table's entry's total count is zero.
+ */
+static struct paygo_entry *find_hash(void *obj);
+
+
+/**
+ * record_anchor
+ *
+ * @cpu: id of the processor
+ * @thread_id: id of the task (Not a pid. this is the logical number of the thread)
+ *
+ * Context: used in paygo_ref
+ *
+ * Record the CPU ID of the processor on which PAYGO_REF was executed to the tast struct. 
+ *
+ */
 static void record_anchor(int cpu, int thread_id);
+
+/**
+ * unrecord_anchor
+ *
+ * @thread_id: id of the task (Not a pid. this is the logical number of the thread)
+ *
+ * Context: used in paygo_unref
+ *
+ * Get the CPU ID of the processor on which PAYGO_REF was *LAST* executed.
+ *
+ */
 static int unrecord_anchor(int thread_id);
 
+/**
+ * dec_other_entry
+ *
+ * @obj: pointer of the object
+ * @cpu: id of the processor
+ *
+ *
+ * Decrement the given cpu's anchor counter.
+ *
+ */
 static void dec_other_entry(void *obj, int cpu);
+
+/**
+ * traverse_paygo
+ *
+ * Context: This function must run alone. 
+ *
+ * Traverse hashtables and print about all of the per-cpu hashtable's entries.
+ *
+ */
+static void traverse_paygo(void);
+//////////////////////////////////////////////////////////////////////////////////////////
 
 static int __init start_module(void)
 {
 	int i;
 	pr_info("paygo module loades!\n");
 	pr_info("entry size = %lu\n", sizeof(struct paygo_entry));
+
+	//initialize for the test
 	objs= kzalloc(sizeof(void*) * NOBJS, GFP_KERNEL); 
 	for(i=0; i<NOBJS; i++) {
 		objs[i] = kzalloc(sizeof(void*), GFP_KERNEL);
@@ -19,6 +218,7 @@ static int __init start_module(void)
 		thread_datas[i].thread_id = i;
 	}
 
+	//initialize the per-cpu hashtable
 	init_paygo_table();
 
 	for(i=0; i<NTHREAD; i++) {
@@ -46,11 +246,12 @@ static void __exit end_module(void)
 	pr_info("paygo module removed!\n");
 }
 
-void init_paygo_table(void)
+static void init_paygo_table(void)
 {
 	int cpu;
 	struct paygo *p;
 
+	// initialize all of cpu's hashtable
 	for_each_possible_cpu(cpu) {
 		p = kzalloc(sizeof(struct paygo), GFP_KERNEL);
 		if (!p) {
@@ -71,7 +272,7 @@ void init_paygo_table(void)
 	}
 }
 
-unsigned long hash_function(const void *obj)
+static unsigned long hash_function(const void *obj)
 {
 	unsigned long ret;
 	unsigned long hash;
@@ -80,7 +281,7 @@ unsigned long hash_function(const void *obj)
 	return ret;
 }
 
-int push_hash(void *obj)
+static int push_hash(void *obj)
 {
 	unsigned long hash;
 	struct paygo_entry *entry;
@@ -119,7 +320,7 @@ int push_hash(void *obj)
 	}
 }
 
-struct paygo_entry *find_hash(void *obj)
+static struct paygo_entry *find_hash(void *obj)
 {
 	unsigned long hash;
 	struct paygo_entry *entry;
@@ -154,7 +355,7 @@ struct paygo_entry *find_hash(void *obj)
 				entry->obj = NULL;
 				entry->local_counter = 0;
 				atomic_set(&(entry->anchor_counter), 0);
-				INIT_LIST_HEAD(&(entry->list));
+				//INIT_LIST_HEAD(&(entry->list));
 				
 				spin_unlock(&ovfl->lock);
 				return NULL;
@@ -197,6 +398,7 @@ int paygo_ref(void *obj, int thread_id)
 	put_cpu();
 	return ret;
 }
+EXPORT_SYMBOL(paygo_ref)
 
 int paygo_unref(void *obj, int thread_id)
 {
@@ -214,8 +416,34 @@ int paygo_unref(void *obj, int thread_id)
 	put_cpu();
 	return 0;
 }
+EXPORT_SYMBOL(paygo_unref)
 
+static void record_anchor(int cpu, int thread_id)
+{
+	struct anchor_info *info;
+	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
+	if (!info) {
+		pr_err("Failed to allocate memory for anchor_info\n");
+		return;
+  }
+	info->cpu = cpu;
+	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
+}
 
+static int unrecord_anchor(int thread_id)
+{
+	int cpu;
+	// Since all of the unref operations are always followed by ref operations, 
+	// there is no situation where anchor information list is empty.
+	struct anchor_info *last_info;
+	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list, struct anchor_info, list);
+	
+	cpu = last_info->cpu;
+	list_del(&last_info->list);
+	kfree(last_info);
+
+	return cpu;	
+}
 
 static void dec_other_entry(void *obj, int cpu)
 {
@@ -244,7 +472,7 @@ static void dec_other_entry(void *obj, int cpu)
 	}
 }
 
-void traverse_paygo(void)
+static void traverse_paygo(void)
 {
 	struct paygo *p;
 	struct paygo_entry *entry;
@@ -329,32 +557,6 @@ static int thread_fn(void *data)
 	return 0;
 }
 
-static void record_anchor(int cpu, int thread_id)
-{
-	struct anchor_info *info;
-	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
-	if (!info) {
-		pr_err("Failed to allocate memory for anchor_info\n");
-		return;
-  }
-	info->cpu = cpu;
-	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
-}
-
-static int unrecord_anchor(int thread_id)
-{
-	int cpu;
-	// Since all of the unref operations are always followed by ref operations, 
-	// there is no situation where anchor information list is empty.
-	struct anchor_info *last_info;
-	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list, struct anchor_info, list);
-	
-	cpu = last_info->cpu;
-	list_del(&last_info->list);
-	kfree(last_info);
-
-	return cpu;	
-}
 
 MODULE_AUTHOR("Kunwook Park");
 
