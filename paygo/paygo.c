@@ -1,6 +1,11 @@
 #include "paygo.h"
 
 
+static void record_anchor(int cpu, int thread_id);
+static int unrecord_anchor(int thread_id);
+
+void dec_other_entry(void *obj, int cpu);
+
 static int __init start_module(void)
 {
 	int i;
@@ -77,7 +82,6 @@ unsigned long hash_function(const void *obj)
 
 int push_hash(void *obj)
 {
-	unsigned long flags;
 	unsigned long hash;
 	struct paygo_entry *entry;
 	struct overflow *ovfl;
@@ -99,11 +103,11 @@ int push_hash(void *obj)
 	} else {
 		struct paygo_entry *new_entry;
 		ovfl = &p->overflow_lists[hash];
-    spin_lock_irqsave(&ovfl->lock, flags);
+    spin_lock(&ovfl->lock);
 
 		new_entry = kzalloc(sizeof(struct paygo_entry), GFP_ATOMIC);
 		if (!new_entry) {
-			spin_unlock_irqrestore(&ovfl->lock, flags);
+			spin_unlock(&ovfl->lock);
 			//put_cpu_var(paygo_table_ptr);
 			return -ENOMEM;
 		}
@@ -114,7 +118,7 @@ int push_hash(void *obj)
 			atomic_set(&new_entry->anchor_counter, 0);
 		}
 		list_add(&new_entry->list, &ovfl->head);
-		spin_unlock_irqrestore(&ovfl->lock, flags);
+		spin_unlock(&ovfl->lock);
 		//put_cpu_var(paygo_table_ptr);
 		return 0;
 	}
@@ -122,7 +126,6 @@ int push_hash(void *obj)
 
 struct paygo_entry *find_hash(void *obj)
 {
-	unsigned long flags;
 	unsigned long hash;
 	struct paygo_entry *entry;
 	struct overflow *ovfl;
@@ -138,76 +141,87 @@ struct paygo_entry *find_hash(void *obj)
 		return entry;
 	} else {
 		ovfl = &p->overflow_lists[hash];
-    spin_lock_irqsave(&ovfl->lock, flags);
+    spin_lock(&ovfl->lock);
 
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
 				list_entry(pos, struct paygo_entry, list);
 
 			if (ovfl_entry->obj == obj) {
-				spin_unlock_irqrestore(&ovfl->lock, flags);
+				spin_unlock(&ovfl->lock);
 				return ovfl_entry;
 			}
 		}
-		spin_unlock_irqrestore(&ovfl->lock, flags);
+		spin_unlock(&ovfl->lock);
 	}
 
 	return NULL;
 }
 
-int paygo_ref(void *obj)
+int paygo_ref(void *obj, int thread_id)
 {
 	int ret;
+	int cpu;
 	struct paygo_entry *entry;
-	preempt_disable();
+	cpu = get_cpu();
 	entry = find_hash(obj);
-	
 	// if there is an entry!
 	if(entry) {
 		entry->local_counter += 1;
-		preempt_enable();
+		record_anchor(cpu, thread_id);
+		put_cpu();
 		return 0;
 	}
 
 	// if there isn't
 	ret = push_hash(obj);
-	preempt_enable();
+	record_anchor(cpu, thread_id);
+	put_cpu();
 	return ret;
+}
+
+int paygo_unref(void *obj, int thread_id)
+{
+	int cpu;
+	int anchor_cpu;
+	struct paygo_entry *entry;
+	cpu = get_cpu();
+	anchor_cpu = unrecord_anchor(thread_id);
+	if(cpu == anchor_cpu) {
+		entry = find_hash(obj);
+		entry->local_counter -= 1;				
+	} else {
+		dec_other_entry(obj, anchor_cpu);
+	}
+	put_cpu();
+	return 0;
 }
 
 void dec_other_entry(void *obj, int cpu)
 {
-	unsigned long flags;
 	unsigned long hash;
 	struct overflow *ovfl;
 	struct list_head *pos, *n;
 	struct paygo *p;
 
 	hash = hash_function(obj);
-
-	preempt_disable();
-	p = per_cpu_ptr(paygo_table_ptr, cpu);
+	p = per_cpu(paygo_table_ptr, cpu);
 
 	if (p->entries[hash].obj == obj) {
 		atomic_dec(&p->entries[hash].anchor_counter);
 	} else {
 		ovfl = &p->overflow_lists[hash];
-    spin_lock_irqsave(&ovfl->lock, flags);
-
+		spin_lock(&ovfl->lock);
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
-				list_entry(pos, struct paygo_entry, list);
-
+				list_entry(pos, struct paygo_entry, list);			
 			if (ovfl_entry->obj == obj) {
 				atomic_dec(&ovfl_entry->anchor_counter);
 				break;
 			}
 		}
-
-		spin_unlock_irqrestore(&ovfl->lock, flags);
+		spin_unlock(&ovfl->lock);
 	}
-
-	preempt_enable();
 }
 
 void traverse_paygo(void)
@@ -281,15 +295,45 @@ static int thread_fn(void *data)
 	struct thread_data td;
 	i = 0;
 	td = *(struct thread_data *)data;
+	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
-		paygo_ref(objs[i % NOBJS]);
+		paygo_ref(objs[i % NOBJS], td.thread_id);
+		msleep(0);
+		paygo_unref(objs[i % NOBJS], td.thread_id);
 		i++;
-		msleep(1);
+		msleep(0);
 	}
 	pr_info("thread%d did %d jobs\n", td.thread_id, i);
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	return 0;
+}
+
+static void record_anchor(int cpu, int thread_id)
+{
+	struct anchor_info *info;
+	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
+	if (!info) {
+		pr_err("Failed to allocate memory for anchor_info\n");
+		return;
+  }
+	info->cpu = cpu;
+	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
+}
+
+static int unrecord_anchor(int thread_id)
+{
+	int cpu;
+	// Since all of the unref operations are always followed by ref operations, 
+	// there is no situation where anchor information list is empty.
+	struct anchor_info *last_info;
+	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list, struct anchor_info, list);
+	
+	cpu = last_info->cpu;
+	list_del(&last_info->list);
+	kfree(last_info);
+
+	return cpu;	
 }
 
 MODULE_AUTHOR("Kunwook Park");

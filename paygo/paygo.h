@@ -17,22 +17,23 @@
 #include <asm/atomic.h>
 #include <linux/hash.h>
 
-#define TABLESIZE 32
+#define TABLESIZE 16
 #define HASHSHIFT 11
 
 
 // for thread
 
-struct perprocess_info {
+struct anchor_info {
+	int cpu;
 	struct list_head list;
 };
 
 struct thread_data {
 	int thread_id;
-	struct perprocess_info anchor_info;		
+	struct list_head anchor_info_list;		
 };
 
-#define NTHREAD 5
+#define NTHREAD 10
 static int thread_fn(void *data);
 static struct task_struct *threads[NTHREAD];
 
@@ -41,7 +42,7 @@ static struct thread_data thread_datas[NTHREAD];
 
 static int thread_ops[NTHREAD];
 
-#define NOBJS 100
+#define NOBJS 20
 static void** objs;
 //
 
@@ -141,7 +142,7 @@ struct paygo_entry *find_hash(void *obj);
  * increment reference count of the object.
  *
  */
-int paygo_ref(void *obj);
+int paygo_ref(void *obj, int thread_id);
 
 /**
  * paygo_unref
@@ -153,7 +154,7 @@ int paygo_ref(void *obj);
  * decrement reference count of the object.
  *
  */
-int paygo_unref(void *obj);
+int paygo_unref(void *obj, int thread_id);
 
 /**
  * traverse_paygo
