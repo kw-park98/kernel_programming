@@ -60,6 +60,9 @@ static struct task_struct *threads[NTHREAD];
 // This is the data structure that will be used in place of tast struct.
 static struct thread_data thread_datas[NTHREAD];
 
+static int cpu_ops_ref[128];
+static int cpu_ops_unref[128];
+
 static int thread_ops[NTHREAD];
 
 static void** objs;
@@ -206,6 +209,7 @@ static void traverse_paygo(void);
 static int __init start_module(void)
 {
 	int i;
+	int cpu;
 	pr_info("paygo module loades!\n");
 	pr_info("entry size = %lu\n", sizeof(struct paygo_entry));
 
@@ -217,6 +221,14 @@ static int __init start_module(void)
 	for(i=0; i<NTHREAD; i++) {
 		thread_datas[i].thread_id = i;
 	}
+	for_each_possible_cpu(cpu) {
+		cpu_ops_ref[cpu] = 0;
+		cpu_ops_unref[cpu] = 0;
+	
+		cpu_ops_ref[cpu + 1] = -1;
+		cpu_ops_unref[cpu + 1] = -1;
+	}
+
 
 	//initialize the per-cpu hashtable
 	init_paygo_table();
@@ -383,6 +395,9 @@ int paygo_ref(void *obj, int thread_id)
 	int cpu;
 	struct paygo_entry *entry;
 	cpu = get_cpu();
+
+	cpu_ops_ref[cpu] += 1;
+
 	entry = find_hash(obj);
 	// if there is an entry!
 	if(entry) {
@@ -398,7 +413,7 @@ int paygo_ref(void *obj, int thread_id)
 	put_cpu();
 	return ret;
 }
-EXPORT_SYMBOL(paygo_ref)
+EXPORT_SYMBOL(paygo_ref);
 
 int paygo_unref(void *obj, int thread_id)
 {
@@ -406,6 +421,9 @@ int paygo_unref(void *obj, int thread_id)
 	int anchor_cpu;
 	struct paygo_entry *entry;
 	cpu = get_cpu();
+	
+	cpu_ops_unref[cpu] += 1;
+
 	anchor_cpu = unrecord_anchor(thread_id);
 	if(likely(cpu == anchor_cpu)) {
 		entry = find_hash(obj);
@@ -416,7 +434,7 @@ int paygo_unref(void *obj, int thread_id)
 	put_cpu();
 	return 0;
 }
-EXPORT_SYMBOL(paygo_unref)
+EXPORT_SYMBOL(paygo_unref);
 
 static void record_anchor(int cpu, int thread_id)
 {
@@ -479,15 +497,10 @@ static void traverse_paygo(void)
 	struct list_head *cur;
 	int i;
 	int cpu;
-	int cpu_ops[128];
-	int last_cpu;
-	int dif_sum;
 
 	entry = NULL;
 
 	for_each_possible_cpu(cpu) {
-		last_cpu = cpu;
-		cpu_ops[last_cpu] = 0;
 		p = per_cpu(paygo_table_ptr, cpu);
 		printk(KERN_INFO "CPU %d:\n", cpu);
 
@@ -495,46 +508,31 @@ static void traverse_paygo(void)
 			entry = &p->entries[i];
 			if (entry->obj) {
 				printk(KERN_INFO
-				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d\n",
+				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
 				       i, entry->obj, entry->local_counter,
-				       atomic_read(&entry->anchor_counter));
+				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
 			} else {
 				printk(KERN_INFO
-				       "  Entry %d: obj=NULL, local_counter=%d, anchor_counter=%d\n",
-				       i, entry->local_counter,
-				       atomic_read(&entry->anchor_counter));
-			}
-			{
-				cpu_ops[last_cpu] += entry->local_counter;
-				cpu_ops[last_cpu] += atomic_read(&entry->anchor_counter);
+				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       i, entry->obj, entry->local_counter,
+				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
 			}
 			list_for_each(cur, &p->overflow_lists[i].head) {
 				entry = list_entry(cur, struct paygo_entry,
 						   list);
 				printk(KERN_INFO
-				       "  Overflow entry: obj=%p, local_counter=%d, anchor_counter=%d\n",
-				       entry->obj, entry->local_counter,
-				       atomic_read(&entry->anchor_counter));
-				{
-					cpu_ops[last_cpu] += entry->local_counter;
-					cpu_ops[last_cpu] += atomic_read(&entry->anchor_counter);
-				}
+				       "  \tOverflow Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       i, entry->obj, entry->local_counter,
+				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
 			}
 		}
 	}
-	dif_sum = 0;
-	cpu_ops[last_cpu+1] = -1;
-	for(i=0; cpu_ops[i] != -1; ++i) {
-		pr_info("CPU[%d]'s operations = %d\n", i, cpu_ops[i]);
-		dif_sum += cpu_ops[i];
-	}
+	for_each_possible_cpu(cpu) {
+		pr_info("CPU[%d]: ref(%d) unref(%d)\n", cpu, cpu_ops_ref[cpu], cpu_ops_unref[cpu]);
+	}	
 	for(i=0; i<NTHREAD; ++i) {
 		pr_info("THREAD%d did %d jobs\n", i, thread_ops[i]);
-		dif_sum -= thread_ops[i];
 	}
-	
-	pr_info("differences between the sum of CPUs and THREADs = %d\n", dif_sum);
-
 }
 
 static int thread_fn(void *data)
@@ -551,7 +549,6 @@ static int thread_fn(void *data)
 		i++;
 		msleep(0);
 	}
-	pr_info("thread%d did %d jobs\n", td.thread_id, i);
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	return 0;
