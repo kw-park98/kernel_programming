@@ -19,6 +19,8 @@
 
 // TODO
 //
+// 0. Sometimes the total count value of a hashtable entry is left at 1
+//
 // 1. Do we need to initialize hashtable entry's list every time we create a null entry? ( INIT_LIST_HEAD(&(entry->list)); )
 //
 // 2. Implement paygo_read
