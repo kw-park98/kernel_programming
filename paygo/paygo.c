@@ -63,7 +63,8 @@ static struct task_struct *threads[NTHREAD];
 static struct thread_data thread_datas[NTHREAD];
 
 static int cpu_ops_ref[128];
-static int cpu_ops_unref[128];
+static int cpu_ops_unref_local[128];
+static int cpu_ops_unref_other[128];
 
 static int thread_ops[NTHREAD];
 
@@ -225,10 +226,12 @@ static int __init start_module(void)
 	}
 	for_each_possible_cpu(cpu) {
 		cpu_ops_ref[cpu] = 0;
-		cpu_ops_unref[cpu] = 0;
-	
+		cpu_ops_unref_local[cpu] = 0;
+		cpu_ops_unref_other[cpu] = 0;
+		
 		cpu_ops_ref[cpu + 1] = -1;
-		cpu_ops_unref[cpu + 1] = -1;
+		cpu_ops_unref_local[cpu + 1] = -1;
+		cpu_ops_unref_other[cpu + 1] = -1;
 	}
 
 
@@ -423,14 +426,14 @@ int paygo_unref(void *obj, int thread_id)
 	int anchor_cpu;
 	struct paygo_entry *entry;
 	cpu = get_cpu();
-	
-	cpu_ops_unref[cpu] += 1;
 
 	anchor_cpu = unrecord_anchor(thread_id);
 	if(likely(cpu == anchor_cpu)) {
+		cpu_ops_unref_local[cpu] += 1;
 		entry = find_hash(obj);
 		entry->local_counter -= 1;				
 	} else {
+		cpu_ops_unref_other[cpu] += 1;
 		dec_other_entry(obj, anchor_cpu);
 	}
 	put_cpu();
@@ -530,7 +533,7 @@ static void traverse_paygo(void)
 		}
 	}
 	for_each_possible_cpu(cpu) {
-		pr_info("CPU[%d]: ref(%d) unref(%d)\n", cpu, cpu_ops_ref[cpu], cpu_ops_unref[cpu]);
+		pr_info("CPU[%d]: ref(%d) unref_local(%d) unref_other(%d)\n", cpu, cpu_ops_ref[cpu], cpu_ops_unref_local[cpu], cpu_ops_unref_other[cpu]);
 	}	
 	for(i=0; i<NTHREAD; ++i) {
 		pr_info("THREAD%d did %d jobs\n", i, thread_ops[i]);
