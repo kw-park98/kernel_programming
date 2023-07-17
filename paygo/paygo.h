@@ -17,7 +17,7 @@
 #include <asm/atomic.h>
 #include <linux/hash.h>
 
-#define TABLESIZE 16
+#define TABLESIZE 4
 #define HASHSHIFT 11
 
 
