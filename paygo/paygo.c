@@ -34,16 +34,16 @@
 // custom number
 
 // size of the per-cpu hashtable
-#define TABLESIZE 4
+#define TABLESIZE 32
 
 // hash function shift bits
 #define HASHSHIFT 11
 
 // the number of test kthread
-#define NTHREAD 10
+#define NTHREAD 8
 
 // the number of objs to test
-#define NOBJS 20
+#define NOBJS 60
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // for thread
@@ -291,7 +291,7 @@ static unsigned long hash_function(const void *obj)
 	unsigned long hash;
 	hash = hash_64((unsigned long)obj, HASHSHIFT);
 	ret = hash % TABLESIZE;
-	ret = TABLESIZE - 1;
+//	ret = TABLESIZE - 1;
 	return ret;
 }
 
@@ -346,7 +346,7 @@ static struct paygo_entry *find_hash(void *obj)
 	hash = hash_function(obj);
 
 	entry = &p->entries[hash];
-
+redo:
 	if (likely(entry->obj == obj)) {
 		return entry;
 	} else {
@@ -358,19 +358,17 @@ static struct paygo_entry *find_hash(void *obj)
 				     atomic_read(&(entry->anchor_counter)) ==
 			     0)) {
 			struct paygo_entry *new_entry;
-			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
-				cpu, obj, entry->local_counter,
-				atomic_read(&(entry->anchor_counter)));
+//			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
+//				cpu, obj, entry->local_counter,
+//				atomic_read(&(entry->anchor_counter)));
 			if (!list_empty(&ovfl->head)) {
 				new_entry = list_first_entry(
 					&ovfl->head, struct paygo_entry, list);
 				*entry = *new_entry;
 				list_del(&new_entry->list);
 				kfree(new_entry);
-				if (entry->obj == obj) {
-					spin_unlock(&ovfl->lock);
-					return entry;
-				}
+				spin_unlock(&ovfl->lock);
+				goto redo;
 			}
 
 			else {
