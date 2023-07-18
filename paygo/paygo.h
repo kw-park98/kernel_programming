@@ -27,6 +27,8 @@ void init_paygo_table(void);
  *
  * @obj: pointer of the object
  *
+ * @thread_id: this is thread id used only in tests instead of task struct
+ *
  * Return: 0 for success
  *
  * increment reference count of the object.
@@ -39,11 +41,23 @@ int paygo_ref(void *obj, int thread_id);
  *
  * @obj: pointer of the object
  *
+ * @thread_id: this is thread id used only in tests instead of task struct
+ *
  * Return: 0 for success
  *
  * decrement reference count of the object.
  *
  */
 int paygo_unref(void *obj, int thread_id);
+
+/**
+ * paygo_read
+ *
+ * @obj: pointer of the object
+ *
+ * Return: the total count on all cores
+ *
+ */
+int paygo_read(void *obj);
 
 #endif // __PAYGO_H__

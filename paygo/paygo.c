@@ -2,18 +2,15 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/percpu.h>
-
 #include <linux/list.h>
 #include <linux/hashtable.h>
 #include <linux/spinlock.h>
 #include <linux/percpu.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
-
 #include <linux/slab.h>
 #include <asm/atomic.h>
 #include <linux/hash.h>
-
 #include "paygo.h"
 
 // TODO
@@ -28,22 +25,23 @@
 // 3. Precision testing of paygo operations
 //
 // 4. Should the processor who gets the overflow lock clean overflow list?
+//		=> Reflected. (retry when the overflow list is not empty)
 //
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // custom number
 
 // size of the per-cpu hashtable
-#define TABLESIZE 32
+#define TABLESIZE (16)
 
 // hash function shift bits
-#define HASHSHIFT 11
+#define HASHSHIFT (11)
 
 // the number of test kthread
-#define NTHREAD 8
+#define NTHREAD (8)
 
 // the number of objs to test
-#define NOBJS 60
+#define NOBJS (60)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // for thread
@@ -73,12 +71,12 @@ static void **objs;
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //data structures
-struct __attribute__((aligned(64))) paygo_entry {
+struct paygo_entry {
 	void *obj;
 	int local_counter;
 	atomic_t anchor_counter;
 	struct list_head list;
-};
+} ____cacheline_aligned_in_smp;
 
 struct overflow {
 	spinlock_t lock;
@@ -448,6 +446,11 @@ int paygo_unref(void *obj, int thread_id)
 	return 0;
 }
 EXPORT_SYMBOL(paygo_unref);
+
+int paygo_read(void *obj)
+{
+	return 0;	
+}
 
 static void record_anchor(int cpu, int thread_id)
 {
