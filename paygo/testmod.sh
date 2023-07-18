@@ -25,7 +25,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-sleep 10
+sleep 1
 
 # 3. rmmod name
 sudo rmmod $NAME
@@ -43,5 +43,5 @@ fi
 echo -e "\n"
 
 # 5. dmesg | tail
-dmesg | tail
-
+#dmesg | tail
+dmesg

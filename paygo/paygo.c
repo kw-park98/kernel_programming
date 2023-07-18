@@ -16,7 +16,6 @@
 
 #include "paygo.h"
 
-
 // TODO
 //
 // 0. Sometimes the total count value of a hashtable entry is left at 1
@@ -30,7 +29,6 @@
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // custom number
-
 
 // size of the per-cpu hashtable
 #define TABLESIZE 4
@@ -53,7 +51,7 @@ struct anchor_info {
 
 struct thread_data {
 	int thread_id;
-	struct list_head anchor_info_list;		
+	struct list_head anchor_info_list;
 };
 
 static int thread_fn(void *data);
@@ -68,7 +66,7 @@ static int cpu_ops_unref_other[128];
 
 static int thread_ops[NTHREAD];
 
-static void** objs;
+static void **objs;
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //data structures
@@ -97,35 +95,26 @@ DEFINE_PER_CPU(struct paygo *, paygo_table_ptr);
 -------------------------------------------------------
 These functions are used for setting up.
 
-1. init_paygo_table
-2. hash_function
+1. hash_function
 -------------------------------------------------------
 These functions are used in hashtable.
 
-3. push_hash 
-4. find_hash
+2. push_hash 
+3. find_hash
 -------------------------------------------------------
 These functions are used for anchor information to put and get.
 
-5. record_anchor
-6. unrecord_anchor
+4. record_anchor
+5. unrecord_anchor
 -------------------------------------------------------
 This function is used in paygo_unref when decrement other cpu's hashtable entry.
 
-7. dec_other_entry
+6. dec_other_entry
 -------------------------------------------------------
 test function
 
-8. traverse_paygo
+7. traverse_paygo
 */
-
-
-/**
- * init_paygo_table
- *
- * allocate memory for hashtable and initialize the table
- */
-static void init_paygo_table(void);
 
 /**
  * hash_function
@@ -159,7 +148,6 @@ static int push_hash(void *obj);
  * And delete entry of the hash table when if the hash table's entry's total count is zero.
  */
 static struct paygo_entry *find_hash(void *obj);
-
 
 /**
  * record_anchor
@@ -217,29 +205,29 @@ static int __init start_module(void)
 	pr_info("entry size = %lu\n", sizeof(struct paygo_entry));
 
 	//initialize for the test
-	objs= kzalloc(sizeof(void*) * NOBJS, GFP_KERNEL); 
-	for(i=0; i<NOBJS; i++) {
-		objs[i] = kzalloc(sizeof(void*), GFP_KERNEL);
+	objs = kzalloc(sizeof(void *) * NOBJS, GFP_KERNEL);
+	for (i = 0; i < NOBJS; i++) {
+		objs[i] = kzalloc(sizeof(void *), GFP_KERNEL);
 	}
-	for(i=0; i<NTHREAD; i++) {
+	for (i = 0; i < NTHREAD; i++) {
 		thread_datas[i].thread_id = i;
 	}
 	for_each_possible_cpu(cpu) {
 		cpu_ops_ref[cpu] = 0;
 		cpu_ops_unref_local[cpu] = 0;
 		cpu_ops_unref_other[cpu] = 0;
-		
+
 		cpu_ops_ref[cpu + 1] = -1;
 		cpu_ops_unref_local[cpu + 1] = -1;
 		cpu_ops_unref_other[cpu + 1] = -1;
 	}
 
-
 	//initialize the per-cpu hashtable
 	init_paygo_table();
 
-	for(i=0; i<NTHREAD; i++) {
-		threads[i] = kthread_run(thread_fn, &thread_datas[i], "my_kthread%d", i);	
+	for (i = 0; i < NTHREAD; i++) {
+		threads[i] = kthread_run(thread_fn, &thread_datas[i],
+					 "my_kthread%d", i);
 		if (IS_ERR(threads[i])) {
 			printk(KERN_ERR "Failed to create counter thread.\n");
 			return PTR_ERR(threads[i]);
@@ -252,18 +240,22 @@ static int __init start_module(void)
 static void __exit end_module(void)
 {
 	int i;
-	for(i=0; i<NTHREAD; i++) {
-		if(threads[i]) {
+	for (i = 0; i < NTHREAD; i++) {
+		if (threads[i]) {
 			kthread_stop(threads[i]);
 			threads[i] = NULL;
 		}
-	} 
+	}
 	msleep(2000);
 	traverse_paygo();
+
+	for (i = 0; i < NOBJS; i++) {
+		kfree(objs[i]);
+	}
 	pr_info("paygo module removed!\n");
 }
 
-static void init_paygo_table(void)
+void init_paygo_table(void)
 {
 	int cpu;
 	struct paygo *p;
@@ -288,6 +280,7 @@ static void init_paygo_table(void)
 		}
 	}
 }
+EXPORT_SYMBOL(init_paygo_table);
 
 static unsigned long hash_function(const void *obj)
 {
@@ -295,6 +288,7 @@ static unsigned long hash_function(const void *obj)
 	unsigned long hash;
 	hash = hash_64((unsigned long)obj, HASHSHIFT);
 	ret = hash % TABLESIZE;
+	ret = TABLESIZE - 1;
 	return ret;
 }
 
@@ -318,19 +312,17 @@ static int push_hash(void *obj)
 	} else {
 		struct paygo_entry *new_entry;
 		ovfl = &p->overflow_lists[hash];
-    spin_lock(&ovfl->lock);
-
 		new_entry = kzalloc(sizeof(struct paygo_entry), GFP_ATOMIC);
 		if (!new_entry) {
-			spin_unlock(&ovfl->lock);
 			return -ENOMEM;
 		}
-
 		{
 			new_entry->obj = obj;
 			new_entry->local_counter = 1;
 			atomic_set(&new_entry->anchor_counter, 0);
 		}
+
+		spin_lock(&ovfl->lock);
 		list_add(&new_entry->list, &ovfl->head);
 		spin_unlock(&ovfl->lock);
 		return 0;
@@ -339,11 +331,14 @@ static int push_hash(void *obj)
 
 static struct paygo_entry *find_hash(void *obj)
 {
+	int cpu;
 	unsigned long hash;
 	struct paygo_entry *entry;
 	struct overflow *ovfl;
 	struct list_head *pos, *n;
-	struct paygo *p = per_cpu(paygo_table_ptr, smp_processor_id());
+	struct paygo *p;
+	cpu = smp_processor_id();
+	p = per_cpu(paygo_table_ptr, cpu);
 
 	hash = hash_function(obj);
 
@@ -351,12 +346,15 @@ static struct paygo_entry *find_hash(void *obj)
 
 	if (likely(entry->obj == obj)) {
 		return entry;
-	} else {	
+	} else {
 		ovfl = &p->overflow_lists[hash];
-    spin_lock(&ovfl->lock);
-
+		spin_lock(&ovfl->lock);
+		///////////////////////////////////////////////////////////////////////////////////////////
+		// delete entry on hash table
+		/*
 		if(unlikely(entry->local_counter + atomic_read(&(entry->anchor_counter)) == 0)) {
 			struct paygo_entry *new_entry;		
+			pr_info("%d %p deleting! (local = %d anchor = %d)\n", cpu, obj, entry->local_counter, atomic_read(&(entry->anchor_counter)));
 			if(!list_empty(&ovfl->head)) {
 				new_entry = list_first_entry(&ovfl->head, struct paygo_entry, list);
 				*entry = *new_entry;
@@ -378,6 +376,8 @@ static struct paygo_entry *find_hash(void *obj)
 				return NULL;
 			}
 		}
+*/
+		///////////////////////////////////////////////////////////////////////////////////////////
 
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
@@ -405,7 +405,7 @@ int paygo_ref(void *obj, int thread_id)
 
 	entry = find_hash(obj);
 	// if there is an entry!
-	if(entry) {
+	if (entry) {
 		entry->local_counter += 1;
 		record_anchor(cpu, thread_id);
 		put_cpu();
@@ -428,10 +428,14 @@ int paygo_unref(void *obj, int thread_id)
 	cpu = get_cpu();
 
 	anchor_cpu = unrecord_anchor(thread_id);
-	if(likely(cpu == anchor_cpu)) {
+	if (likely(cpu == anchor_cpu)) {
 		cpu_ops_unref_local[cpu] += 1;
 		entry = find_hash(obj);
-		entry->local_counter -= 1;				
+		if (!entry) {
+			pr_info("paygo_unref: NULL return ERR!!!\n");
+			return 0;
+		}
+		entry->local_counter -= 1;
 	} else {
 		cpu_ops_unref_other[cpu] += 1;
 		dec_other_entry(obj, anchor_cpu);
@@ -448,7 +452,7 @@ static void record_anchor(int cpu, int thread_id)
 	if (!info) {
 		pr_err("Failed to allocate memory for anchor_info\n");
 		return;
-  }
+	}
 	info->cpu = cpu;
 	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
 }
@@ -456,16 +460,17 @@ static void record_anchor(int cpu, int thread_id)
 static int unrecord_anchor(int thread_id)
 {
 	int cpu;
-	// Since all of the unref operations are always followed by ref operations, 
+	// Since all of the unref operations are always followed by ref operations,
 	// there is no situation where anchor information list is empty.
 	struct anchor_info *last_info;
-	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list, struct anchor_info, list);
-	
+	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list,
+				    struct anchor_info, list);
+
 	cpu = last_info->cpu;
 	list_del(&last_info->list);
 	kfree(last_info);
 
-	return cpu;	
+	return cpu;
 }
 
 static void dec_other_entry(void *obj, int cpu)
@@ -485,7 +490,7 @@ static void dec_other_entry(void *obj, int cpu)
 		spin_lock(&ovfl->lock);
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
-				list_entry(pos, struct paygo_entry, list);			
+				list_entry(pos, struct paygo_entry, list);
 			if (ovfl_entry->obj == obj) {
 				atomic_dec(&ovfl_entry->anchor_counter);
 				break;
@@ -502,6 +507,7 @@ static void traverse_paygo(void)
 	struct list_head *cur;
 	int i;
 	int cpu;
+	int ovfl_length;
 
 	entry = NULL;
 
@@ -510,32 +516,47 @@ static void traverse_paygo(void)
 		printk(KERN_INFO "CPU %d:\n", cpu);
 
 		for (i = 0; i < TABLESIZE; i++) {
+			ovfl_length = 1;
 			entry = &p->entries[i];
 			if (entry->obj) {
 				printk(KERN_INFO
 				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
 				       i, entry->obj, entry->local_counter,
-				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
+				       atomic_read(&entry->anchor_counter),
+				       entry->local_counter +
+					       atomic_read(
+						       &entry->anchor_counter));
 			} else {
 				printk(KERN_INFO
 				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
 				       i, entry->obj, entry->local_counter,
-				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
+				       atomic_read(&entry->anchor_counter),
+				       entry->local_counter +
+					       atomic_read(
+						       &entry->anchor_counter));
 			}
 			list_for_each(cur, &p->overflow_lists[i].head) {
 				entry = list_entry(cur, struct paygo_entry,
 						   list);
 				printk(KERN_INFO
-				       "  \tOverflow Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
-				       i, entry->obj, entry->local_counter,
-				       atomic_read(&entry->anchor_counter), entry->local_counter + atomic_read(&entry->anchor_counter));
+				       "  \tOverflow Entry %d-%d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       i, ovfl_length, entry->obj,
+				       entry->local_counter,
+				       atomic_read(&entry->anchor_counter),
+				       entry->local_counter +
+					       atomic_read(
+						       &entry->anchor_counter));
+				ovfl_length++;
 			}
 		}
 	}
+	pr_info("NOBJS: %d\n", NOBJS);
 	for_each_possible_cpu(cpu) {
-		pr_info("CPU[%d]: ref(%d) unref_local(%d) unref_other(%d)\n", cpu, cpu_ops_ref[cpu], cpu_ops_unref_local[cpu], cpu_ops_unref_other[cpu]);
-	}	
-	for(i=0; i<NTHREAD; ++i) {
+		pr_info("CPU[%d]: ref(%d) unref_local(%d) unref_other(%d)\n",
+			cpu, cpu_ops_ref[cpu], cpu_ops_unref_local[cpu],
+			cpu_ops_unref_other[cpu]);
+	}
+	for (i = 0; i < NTHREAD; ++i) {
 		pr_info("THREAD%d did %d jobs\n", i, thread_ops[i]);
 	}
 }
@@ -552,13 +573,11 @@ static int thread_fn(void *data)
 		msleep(0);
 		paygo_unref(objs[i % NOBJS], td.thread_id);
 		i++;
-		msleep(0);
 	}
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	return 0;
 }
-
 
 MODULE_AUTHOR("Kunwook Park");
 

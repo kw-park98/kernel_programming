@@ -6,12 +6,21 @@
 -------------------------------------------------------
 These functions are APIs for reference counting.
 
+0. init_paygo
+
 1. paygo_ref
 2. paygo_unref 
 
 3. paygo_read (not yet)
 -------------------------------------------------------
 */
+
+/**
+ * init_paygo_table
+ *
+ * allocate memory for hashtable and initialize the table
+ */
+void init_paygo_table(void);
 
 /**
  * paygo_ref
@@ -36,6 +45,5 @@ int paygo_ref(void *obj, int thread_id);
  *
  */
 int paygo_unref(void *obj, int thread_id);
-
 
 #endif // __PAYGO_H__
