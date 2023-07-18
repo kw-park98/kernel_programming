@@ -349,35 +349,33 @@ static struct paygo_entry *find_hash(void *obj)
 	} else {
 		ovfl = &p->overflow_lists[hash];
 		spin_lock(&ovfl->lock);
-		///////////////////////////////////////////////////////////////////////////////////////////
-		// delete entry on hash table
-		/*
-		if(unlikely(entry->local_counter + atomic_read(&(entry->anchor_counter)) == 0)) {
-			struct paygo_entry *new_entry;		
-			pr_info("%d %p deleting! (local = %d anchor = %d)\n", cpu, obj, entry->local_counter, atomic_read(&(entry->anchor_counter)));
-			if(!list_empty(&ovfl->head)) {
-				new_entry = list_first_entry(&ovfl->head, struct paygo_entry, list);
-				*entry = *new_entry;
-				list_del(&new_entry->list);
-				kfree(new_entry);		
-				if(entry->obj == obj) {
-					spin_unlock(&ovfl->lock);
-					return entry;
-				}
-			}
-
-			else {
-				entry->obj = NULL;
-				entry->local_counter = 0;
-				atomic_set(&(entry->anchor_counter), 0);
-				//INIT_LIST_HEAD(&(entry->list));
-				
+	///////////////////////////////////////////////////////////////////////////////////////////
+	// delete entry on hash table
+	if(unlikely(entry->local_counter + atomic_read(&(entry->anchor_counter)) == 0)) {
+		struct paygo_entry *new_entry;		
+		pr_info("%d %p deleting! (local = %d anchor = %d)\n", cpu, obj, entry->local_counter, atomic_read(&(entry->anchor_counter)));
+		if(!list_empty(&ovfl->head)) {
+			new_entry = list_first_entry(&ovfl->head, struct paygo_entry, list);
+			*entry = *new_entry;
+			list_del(&new_entry->list);
+			kfree(new_entry);		
+			if(entry->obj == obj) {
 				spin_unlock(&ovfl->lock);
-				return NULL;
+				return entry;
 			}
 		}
-*/
-		///////////////////////////////////////////////////////////////////////////////////////////
+
+		else {
+			entry->obj = NULL;
+			entry->local_counter = 0;
+			atomic_set(&(entry->anchor_counter), 0);
+			//INIT_LIST_HEAD(&(entry->list));
+			
+			spin_unlock(&ovfl->lock);
+			return NULL;
+		}
+	}
+	///////////////////////////////////////////////////////////////////////////////////////////
 
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
@@ -482,7 +480,7 @@ static void dec_other_entry(void *obj, int cpu)
 
 	hash = hash_function(obj);
 	p = per_cpu(paygo_table_ptr, cpu);
-
+retry:
 	if (p->entries[hash].obj == obj) {
 		atomic_dec(&p->entries[hash].anchor_counter);
 	} else {
@@ -493,10 +491,12 @@ static void dec_other_entry(void *obj, int cpu)
 				list_entry(pos, struct paygo_entry, list);
 			if (ovfl_entry->obj == obj) {
 				atomic_dec(&ovfl_entry->anchor_counter);
-				break;
+				spin_unlock(&ovfl->lock);
+				return;
 			}
 		}
 		spin_unlock(&ovfl->lock);
+		goto retry;
 	}
 }
 
