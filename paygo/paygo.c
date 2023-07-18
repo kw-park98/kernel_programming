@@ -19,12 +19,15 @@
 // TODO
 //
 // 0. Sometimes the total count value of a hashtable entry is left at 1
+//		=> Fixed. (retry dec_other when the processor can not find the obj in the overflow list)
 //
 // 1. Do we need to initialize hashtable entry's list every time we create a null entry? ( INIT_LIST_HEAD(&(entry->list)); )
 //
 // 2. Implement paygo_read
 //
 // 3. Precision testing of paygo operations
+//
+// 4. Should the processor who gets the overflow lock clean overflow list?
 //
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -349,33 +352,38 @@ static struct paygo_entry *find_hash(void *obj)
 	} else {
 		ovfl = &p->overflow_lists[hash];
 		spin_lock(&ovfl->lock);
-	///////////////////////////////////////////////////////////////////////////////////////////
-	// delete entry on hash table
-	if(unlikely(entry->local_counter + atomic_read(&(entry->anchor_counter)) == 0)) {
-		struct paygo_entry *new_entry;		
-		pr_info("%d %p deleting! (local = %d anchor = %d)\n", cpu, obj, entry->local_counter, atomic_read(&(entry->anchor_counter)));
-		if(!list_empty(&ovfl->head)) {
-			new_entry = list_first_entry(&ovfl->head, struct paygo_entry, list);
-			*entry = *new_entry;
-			list_del(&new_entry->list);
-			kfree(new_entry);		
-			if(entry->obj == obj) {
+		///////////////////////////////////////////////////////////////////////////////////////////
+		// delete entry on hash table
+		if (unlikely(entry->local_counter +
+				     atomic_read(&(entry->anchor_counter)) ==
+			     0)) {
+			struct paygo_entry *new_entry;
+			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
+				cpu, obj, entry->local_counter,
+				atomic_read(&(entry->anchor_counter)));
+			if (!list_empty(&ovfl->head)) {
+				new_entry = list_first_entry(
+					&ovfl->head, struct paygo_entry, list);
+				*entry = *new_entry;
+				list_del(&new_entry->list);
+				kfree(new_entry);
+				if (entry->obj == obj) {
+					spin_unlock(&ovfl->lock);
+					return entry;
+				}
+			}
+
+			else {
+				entry->obj = NULL;
+				entry->local_counter = 0;
+				atomic_set(&(entry->anchor_counter), 0);
+				//INIT_LIST_HEAD(&(entry->list));
+
 				spin_unlock(&ovfl->lock);
-				return entry;
+				return NULL;
 			}
 		}
-
-		else {
-			entry->obj = NULL;
-			entry->local_counter = 0;
-			atomic_set(&(entry->anchor_counter), 0);
-			//INIT_LIST_HEAD(&(entry->list));
-			
-			spin_unlock(&ovfl->lock);
-			return NULL;
-		}
-	}
-	///////////////////////////////////////////////////////////////////////////////////////////
+		///////////////////////////////////////////////////////////////////////////////////////////
 
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
