@@ -202,7 +202,7 @@ static int __init start_module(void)
 {
 	int i;
 	int cpu;
-	pr_info("paygo module loades!\n");
+	pr_info("paygo module loaded!\n");
 	pr_info("entry size = %lu\n", sizeof(struct paygo_entry));
 
 	//initialize for the test
@@ -247,9 +247,10 @@ static void __exit end_module(void)
 			threads[i] = NULL;
 		}
 	}
-	msleep(2000);
-	traverse_paygo();
 
+	msleep(2000);
+
+	traverse_paygo();
 	for (i = 0; i < NOBJS; i++) {
 		kfree(objs[i]);
 	}
@@ -289,7 +290,6 @@ static unsigned long hash_function(const void *obj)
 	unsigned long hash;
 	hash = hash_64((unsigned long)obj, HASHSHIFT);
 	ret = hash % TABLESIZE;
-//	ret = TABLESIZE - 1;
 	return ret;
 }
 
@@ -303,6 +303,7 @@ static int push_hash(void *obj)
 	hash = hash_function(obj);
 	entry = &p->entries[hash];
 
+	// when the hashtable's entry is NULL
 	if (entry->obj == NULL) {
 		{
 			entry->obj = obj;
@@ -310,7 +311,11 @@ static int push_hash(void *obj)
 			atomic_set(&entry->anchor_counter, 0);
 		}
 		return 0;
-	} else {
+	} 
+
+	// when there is NULL in the entry
+	// We need to insert a new entry into the overflow list
+	else {
 		struct paygo_entry *new_entry;
 		ovfl = &p->overflow_lists[hash];
 		new_entry = kzalloc(sizeof(struct paygo_entry), GFP_ATOMIC);
@@ -366,6 +371,9 @@ redo:
 				list_del(&new_entry->list);
 				kfree(new_entry);
 				spin_unlock(&ovfl->lock);
+				// we need to check 
+				// 0. Whether or not a new entry in the hashtable is what we were looking for
+				// 1. Whether or not the overflow list is empty
 				goto redo;
 			}
 
@@ -381,6 +389,8 @@ redo:
 		}
 		///////////////////////////////////////////////////////////////////////////////////////////
 
+		// the hashtable's entry is not the entry that we are looking for.
+		// so we need to search overflow list
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
 				list_entry(pos, struct paygo_entry, list);
@@ -430,15 +440,22 @@ int paygo_unref(void *obj, int thread_id)
 	cpu = get_cpu();
 
 	anchor_cpu = unrecord_anchor(thread_id);
+	
+	// local operation
 	if (likely(cpu == anchor_cpu)) {
 		cpu_ops_unref_local[cpu] += 1;
-		entry = find_hash(obj);
+		entry = find_hash(obj);	
+		// All unref operations are called after the ref operation is called.
+		// Therefore, there should never be a situation where there is no entry when doing an unref.
 		if (!entry) {
 			pr_info("paygo_unref: NULL return ERR!!!\n");
+			put_cpu();
 			return 0;
 		}
 		entry->local_counter -= 1;
-	} else {
+	} 
+	// global operation
+	else {
 		cpu_ops_unref_other[cpu] += 1;
 		dec_other_entry(obj, anchor_cpu);
 	}
@@ -489,6 +506,9 @@ static void dec_other_entry(void *obj, int cpu)
 
 	hash = hash_function(obj);
 	p = per_cpu(paygo_table_ptr, cpu);
+
+// If the entry we are looking for does not exist in the overflow list, we should try again 
+// because the owner of the hash table may have moved the entry from that overflow list to the hashtable.
 retry:
 	if (p->entries[hash].obj == obj) {
 		atomic_dec(&p->entries[hash].anchor_counter);
