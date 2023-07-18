@@ -68,7 +68,11 @@ static int cpu_ops_unref_other[128];
 
 static int thread_ops[NTHREAD];
 
-static void **objs;
+// This is the data structure that will be used in place of page struct.
+struct mypage {
+	unsigned long flag;
+};
+static struct mypage *mypages[NOBJS];
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //data structures
@@ -208,9 +212,9 @@ static int __init start_module(void)
 
 	//initialize for the test
 	atomic_set(&thread_done, 0);
-	objs = kzalloc(sizeof(void *) * NOBJS, GFP_KERNEL);
 	for (i = 0; i < NOBJS; i++) {
-		objs[i] = kzalloc(sizeof(void *), GFP_KERNEL);
+		mypages[i] = kzalloc(sizeof(struct mypage), GFP_KERNEL);
+		mypages[i]->flag = 0;
 	}
 	for (i = 0; i < NTHREAD; i++) {
 		thread_datas[i].thread_id = i;
@@ -257,7 +261,7 @@ static void __exit end_module(void)
 
 	// free the test objs
 	for (i = 0; i < NOBJS; i++) {
-		kfree(objs[i]);
+		kfree(mypages[i]);
 	}
 	pr_info("paygo module removed!\n");
 }
@@ -604,9 +608,9 @@ static int thread_fn(void *data)
 	td = *(struct thread_data *)data;
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
-		paygo_ref(objs[i % NOBJS], td.thread_id);
+		paygo_ref((void *)mypages[i % NOBJS], td.thread_id);
 		msleep(0);
-		paygo_unref(objs[i % NOBJS], td.thread_id);
+		paygo_unref((void *)mypages[i % NOBJS], td.thread_id);
 		i++;
 	}
 	thread_ops[td.thread_id] = i;

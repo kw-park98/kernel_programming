@@ -10,6 +10,9 @@
 #NAME=${1%.c}
 NAME="paygo"
 
+clang-format-11 -i $NAME.c
+clang-format-11 -i $NAME.h
+
 # 1. make NAME=name
 make NAME=$NAME
 if [ $? -ne 0 ]; then
@@ -25,7 +28,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-sleep 70
+sleep 5
 
 # 3. rmmod name
 sudo rmmod $NAME
