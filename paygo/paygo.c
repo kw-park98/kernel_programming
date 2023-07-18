@@ -32,7 +32,7 @@
 // custom number
 
 // size of the per-cpu hashtable
-#define TABLESIZE (16)
+#define TABLESIZE (8)
 
 // hash function shift bits
 #define HASHSHIFT (11)
@@ -41,7 +41,7 @@
 #define NTHREAD (8)
 
 // the number of objs to test
-#define NOBJS (60)
+#define NOBJS (120)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // for thread
@@ -61,6 +61,7 @@ static struct task_struct *threads[NTHREAD];
 // This is the data structure that will be used in place of tast struct.
 static struct thread_data thread_datas[NTHREAD];
 
+atomic_t thread_done;
 static int cpu_ops_ref[128];
 static int cpu_ops_unref_local[128];
 static int cpu_ops_unref_other[128];
@@ -203,9 +204,10 @@ static int __init start_module(void)
 	int i;
 	int cpu;
 	pr_info("paygo module loaded!\n");
-	pr_info("entry size = %lu\n", sizeof(struct paygo_entry));
+	pr_info("paygo entry size = %lu\n", sizeof(struct paygo_entry));
 
 	//initialize for the test
+	atomic_set(&thread_done, 0);
 	objs = kzalloc(sizeof(void *) * NOBJS, GFP_KERNEL);
 	for (i = 0; i < NOBJS; i++) {
 		objs[i] = kzalloc(sizeof(void *), GFP_KERNEL);
@@ -247,10 +249,13 @@ static void __exit end_module(void)
 			threads[i] = NULL;
 		}
 	}
-
-	msleep(2000);
+	// wait for all of the threads to finish
+	while (atomic_read(&thread_done) < NTHREAD)
+		;
 
 	traverse_paygo();
+
+	// free the test objs
 	for (i = 0; i < NOBJS; i++) {
 		kfree(objs[i]);
 	}
@@ -311,7 +316,7 @@ static int push_hash(void *obj)
 			atomic_set(&entry->anchor_counter, 0);
 		}
 		return 0;
-	} 
+	}
 
 	// when there is NULL in the entry
 	// We need to insert a new entry into the overflow list
@@ -361,9 +366,9 @@ redo:
 				     atomic_read(&(entry->anchor_counter)) ==
 			     0)) {
 			struct paygo_entry *new_entry;
-//			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
-//				cpu, obj, entry->local_counter,
-//				atomic_read(&(entry->anchor_counter)));
+			//			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
+			//				cpu, obj, entry->local_counter,
+			//				atomic_read(&(entry->anchor_counter)));
 			if (!list_empty(&ovfl->head)) {
 				new_entry = list_first_entry(
 					&ovfl->head, struct paygo_entry, list);
@@ -371,7 +376,7 @@ redo:
 				list_del(&new_entry->list);
 				kfree(new_entry);
 				spin_unlock(&ovfl->lock);
-				// we need to check 
+				// we need to retry and check
 				// 0. Whether or not a new entry in the hashtable is what we were looking for
 				// 1. Whether or not the overflow list is empty
 				goto redo;
@@ -440,11 +445,11 @@ int paygo_unref(void *obj, int thread_id)
 	cpu = get_cpu();
 
 	anchor_cpu = unrecord_anchor(thread_id);
-	
+
 	// local operation
 	if (likely(cpu == anchor_cpu)) {
 		cpu_ops_unref_local[cpu] += 1;
-		entry = find_hash(obj);	
+		entry = find_hash(obj);
 		// All unref operations are called after the ref operation is called.
 		// Therefore, there should never be a situation where there is no entry when doing an unref.
 		if (!entry) {
@@ -453,7 +458,7 @@ int paygo_unref(void *obj, int thread_id)
 			return 0;
 		}
 		entry->local_counter -= 1;
-	} 
+	}
 	// global operation
 	else {
 		cpu_ops_unref_other[cpu] += 1;
@@ -466,8 +471,9 @@ EXPORT_SYMBOL(paygo_unref);
 
 int paygo_read(void *obj)
 {
-	return 0;	
+	return 0;
 }
+EXPORT_SYMBOL(paygo_read);
 
 static void record_anchor(int cpu, int thread_id)
 {
@@ -507,7 +513,7 @@ static void dec_other_entry(void *obj, int cpu)
 	hash = hash_function(obj);
 	p = per_cpu(paygo_table_ptr, cpu);
 
-// If the entry we are looking for does not exist in the overflow list, we should try again 
+// If the entry we are looking for does not exist in the overflow list, we should try again
 // because the owner of the hash table may have moved the entry from that overflow list to the hashtable.
 retry:
 	if (p->entries[hash].obj == obj) {
@@ -605,6 +611,7 @@ static int thread_fn(void *data)
 	}
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
+	atomic_inc(&thread_done);
 	return 0;
 }
 

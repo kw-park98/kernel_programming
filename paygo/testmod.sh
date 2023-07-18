@@ -25,7 +25,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-sleep 20
+sleep 70
 
 # 3. rmmod name
 sudo rmmod $NAME
