@@ -32,16 +32,16 @@
 // custom number
 
 // size of the per-cpu hashtable
-#define TABLESIZE (8)
+#define TABLESIZE (32)
 
 // hash function shift bits
 #define HASHSHIFT (11)
 
 // the number of test kthread
-#define NTHREAD (8)
+#define NTHREAD (10)
 
 // the number of objs to test
-#define NOBJS (120)
+#define NOBJS (10)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // for thread
@@ -68,11 +68,7 @@ static int cpu_ops_unref_other[128];
 
 static int thread_ops[NTHREAD];
 
-// This is the data structure that will be used in place of page struct.
-struct mypage {
-	unsigned long flag;
-};
-static struct mypage *mypages[NOBJS];
+static void *objs[NOBJS];
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //data structures
@@ -201,6 +197,7 @@ static void dec_other_entry(void *obj, int cpu);
  *
  */
 static void traverse_paygo(void);
+
 //////////////////////////////////////////////////////////////////////////////////////////
 
 static int __init start_module(void)
@@ -213,8 +210,7 @@ static int __init start_module(void)
 	//initialize for the test
 	atomic_set(&thread_done, 0);
 	for (i = 0; i < NOBJS; i++) {
-		mypages[i] = kzalloc(sizeof(struct mypage), GFP_KERNEL);
-		mypages[i]->flag = 0;
+		objs[i] = kzalloc(sizeof(void *), GFP_KERNEL);
 	}
 	for (i = 0; i < NTHREAD; i++) {
 		thread_datas[i].thread_id = i;
@@ -261,7 +257,7 @@ static void __exit end_module(void)
 
 	// free the test objs
 	for (i = 0; i < NOBJS; i++) {
-		kfree(mypages[i]);
+		kfree(objs[i]);
 	}
 	pr_info("paygo module removed!\n");
 }
@@ -358,6 +354,8 @@ static struct paygo_entry *find_hash(void *obj)
 	hash = hash_function(obj);
 
 	entry = &p->entries[hash];
+
+// redo to delete a new entry when the sum of the new entry's counter taken from the overflow list is 0
 redo:
 	if (likely(entry->obj == obj)) {
 		return entry;
@@ -370,9 +368,6 @@ redo:
 				     atomic_read(&(entry->anchor_counter)) ==
 			     0)) {
 			struct paygo_entry *new_entry;
-			//			pr_info("%d %p deleting! (local = %d anchor = %d)\n",
-			//				cpu, obj, entry->local_counter,
-			//				atomic_read(&(entry->anchor_counter)));
 			if (!list_empty(&ovfl->head)) {
 				new_entry = list_first_entry(
 					&ovfl->head, struct paygo_entry, list);
@@ -380,7 +375,7 @@ redo:
 				list_del(&new_entry->list);
 				kfree(new_entry);
 				spin_unlock(&ovfl->lock);
-				// we need to retry and check
+				// we need to redo and check
 				// 0. Whether or not a new entry in the hashtable is what we were looking for
 				// 1. Whether or not the overflow list is empty
 				goto redo;
@@ -390,7 +385,6 @@ redo:
 				entry->obj = NULL;
 				entry->local_counter = 0;
 				atomic_set(&(entry->anchor_counter), 0);
-				//INIT_LIST_HEAD(&(entry->list));
 
 				spin_unlock(&ovfl->lock);
 				return NULL;
@@ -429,8 +423,9 @@ int paygo_ref(void *obj, int thread_id)
 	if (entry) {
 		entry->local_counter += 1;
 		record_anchor(cpu, thread_id);
+		ret = 0;
 		put_cpu();
-		return 0;
+		return ret;
 	}
 
 	// if there isn't
@@ -473,9 +468,80 @@ int paygo_unref(void *obj, int thread_id)
 }
 EXPORT_SYMBOL(paygo_unref);
 
-int paygo_read(void *obj)
+bool paygo_read(void *obj)
 {
-	return 0;
+	int mycpu;
+	int cur_cpu;
+	unsigned long hash;
+	struct paygo *p;
+	struct overflow *ovfl;
+	struct list_head *pos, *n;
+	struct paygo_entry *entry;
+
+	mycpu = get_cpu();
+	hash = hash_function(obj);
+
+	for_each_possible_cpu(cur_cpu) {
+		p = per_cpu(paygo_table_ptr, cur_cpu);
+		if (unlikely(mycpu == cur_cpu)) {
+			entry = find_hash(obj);
+			if (entry) {
+				if (entry->local_counter +
+					    atomic_read(
+						    &(entry->anchor_counter)) >
+				    0) {
+					put_cpu();
+					return false;
+				}
+			}
+			continue;
+		}
+		// other cpu
+		else {
+			// Unlike dec_other, in paygo_read there is no 100% certainty
+			// that there is an entry in the hashtable (or in the overflow list).
+			// Therefore, we must first prevent the hashtable's owner from removing a entry from the overflow list
+			// and adding it to the hashtable. (this step is done in find_hash)
+			ovfl = &p->overflow_lists[hash];
+			spin_lock(&ovfl->lock);
+
+			entry = &p->entries[hash];
+			if (entry->obj == obj) {
+				if (entry->local_counter +
+					    atomic_read(
+						    &(entry->anchor_counter)) >
+				    0) {
+					spin_unlock(&ovfl->lock);
+					put_cpu();
+					return false;
+				}
+			} else {
+				list_for_each_safe(pos, n, &ovfl->head) {
+					struct paygo_entry *ovfl_entry =
+						list_entry(pos,
+							   struct paygo_entry,
+							   list);
+					if (ovfl_entry->obj == obj) {
+						if (ovfl_entry->local_counter +
+							    atomic_read(&(
+								    ovfl_entry
+									    ->anchor_counter)) >
+						    0) {
+							spin_unlock(
+								&ovfl->lock);
+							put_cpu();
+							return false;
+						}
+					}
+				}
+			}
+			spin_unlock(&ovfl->lock);
+			continue;
+		}
+	}
+
+	put_cpu();
+	return true;
 }
 EXPORT_SYMBOL(paygo_read);
 
@@ -528,7 +594,7 @@ retry:
 		list_for_each_safe(pos, n, &ovfl->head) {
 			struct paygo_entry *ovfl_entry =
 				list_entry(pos, struct paygo_entry, list);
-			if (ovfl_entry->obj == obj) {
+			if (likely(ovfl_entry->obj == obj)) {
 				atomic_dec(&ovfl_entry->anchor_counter);
 				spin_unlock(&ovfl->lock);
 				return;
@@ -602,20 +668,26 @@ static void traverse_paygo(void)
 
 static int thread_fn(void *data)
 {
+	void *true_check;
 	int i;
 	struct thread_data td;
 	i = 0;
+	true_check = kmalloc(sizeof(int), GFP_KERNEL);
 	td = *(struct thread_data *)data;
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
-		paygo_ref((void *)mypages[i % NOBJS], td.thread_id);
+		paygo_ref(objs[i % NOBJS], td.thread_id);
 		msleep(0);
-		paygo_unref((void *)mypages[i % NOBJS], td.thread_id);
+		paygo_unref(objs[i % NOBJS], td.thread_id);
+
+		//pr_info("%d\n", paygo_read(true_check));
+		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
 		i++;
 	}
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	atomic_inc(&thread_done);
+	kfree(true_check);
 	return 0;
 }
 

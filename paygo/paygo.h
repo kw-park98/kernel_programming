@@ -55,9 +55,9 @@ int paygo_unref(void *obj, int thread_id);
  *
  * @obj: pointer of the object
  *
- * Return: the total count on all cores
+ * Return: True when the total count is zero, False when else
  *
  */
-int paygo_read(void *obj);
+bool paygo_read(void *obj);
 
 #endif // __PAYGO_H__
