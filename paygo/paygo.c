@@ -159,7 +159,7 @@ static struct paygo_entry *find_hash(void *obj);
  * Record the CPU ID of the processor on which PAYGO_REF was executed to the tast struct. 
  *
  */
-static void record_anchor(int cpu, int thread_id);
+static void record_anchor(int thread_id, int cpu, void *obj);
 
 /**
  * unrecord_anchor
@@ -171,7 +171,7 @@ static void record_anchor(int cpu, int thread_id);
  * Get the CPU ID of the processor on which PAYGO_REF was *LAST* executed.
  *
  */
-static int unrecord_anchor(int thread_id);
+static int unrecord_anchor(int thread_id, void *obj);
 
 /**
  * dec_other_entry
@@ -414,7 +414,7 @@ int paygo_inc(void *obj, int thread_id)
 	// if there is an entry!
 	if (entry) {
 		entry->local_counter += 1;
-		record_anchor(cpu, thread_id);
+		record_anchor(thread_id, cpu, obj);
 		ret = 0;
 		put_cpu();
 		return ret;
@@ -422,7 +422,7 @@ int paygo_inc(void *obj, int thread_id)
 
 	// if there isn't
 	ret = push_hash(obj);
-	record_anchor(cpu, thread_id);
+	record_anchor(thread_id, cpu, obj);
 	put_cpu();
 	return ret;
 }
@@ -435,7 +435,7 @@ int paygo_dec(void *obj, int thread_id)
 	struct paygo_entry *entry;
 	cpu = get_cpu();
 
-	anchor_cpu = unrecord_anchor(thread_id);
+	anchor_cpu = unrecord_anchor(thread_id, obj);
 
 	// local operation
 	if (likely(cpu == anchor_cpu)) {
@@ -540,7 +540,7 @@ bool paygo_read(void *obj)
 }
 EXPORT_SYMBOL(paygo_read);
 
-static void record_anchor(int cpu, int thread_id)
+static void record_anchor(int thread_id, int cpu, void *obj)
 {
 	struct anchor_info *info;
 	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
@@ -552,7 +552,7 @@ static void record_anchor(int cpu, int thread_id)
 	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
 }
 
-static int unrecord_anchor(int thread_id)
+static int unrecord_anchor(int thread_id, void *obj)
 {
 	int cpu;
 	// Since all of the unref operations are always followed by ref operations,
@@ -671,9 +671,11 @@ static int thread_fn(void *data)
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
 		paygo_inc(objs[i % NOBJS], td.thread_id);
+		//paygo_inc(objs[(i + 1) % NOBJS], td.thread_id);
 		msleep(0);
 		paygo_dec(objs[i % NOBJS], td.thread_id);
-		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+		//paygo_dec(objs[(i + 1) % NOBJS], td.thread_id);
+		//pr_info("%d\n", paygo_read(objs[i % NOBJS]));
 		i++;
 	}
 	thread_ops[td.thread_id] = i;
