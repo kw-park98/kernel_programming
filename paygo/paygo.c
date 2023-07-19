@@ -109,7 +109,7 @@ These functions are used for anchor information to put and get.
 4. record_anchor
 5. unrecord_anchor
 -------------------------------------------------------
-This function is used in paygo_unref when decrement other cpu's hashtable entry.
+This function is used in paygo_dec when decrement other cpu's hashtable entry.
 
 6. dec_other_entry
 -------------------------------------------------------
@@ -157,7 +157,7 @@ static struct paygo_entry *find_hash(void *obj);
  * @cpu: id of the processor
  * @thread_id: id of the task (Not a pid. this is the logical number of the thread)
  *
- * Context: used in paygo_ref
+ * Context: used in paygo_inc
  *
  * Record the CPU ID of the processor on which PAYGO_REF was executed to the tast struct. 
  *
@@ -169,7 +169,7 @@ static void record_anchor(int cpu, int thread_id);
  *
  * @thread_id: id of the task (Not a pid. this is the logical number of the thread)
  *
- * Context: used in paygo_unref
+ * Context: used in paygo_dec
  *
  * Get the CPU ID of the processor on which PAYGO_REF was *LAST* executed.
  *
@@ -254,6 +254,10 @@ static void __exit end_module(void)
 		;
 
 	traverse_paygo();
+
+	for (i = 0; i < NOBJS; i++) {
+		pr_info("%d\n", paygo_read(objs[i]));
+	}
 
 	// free the test objs
 	for (i = 0; i < NOBJS; i++) {
@@ -409,7 +413,7 @@ redo:
 	return NULL;
 }
 
-int paygo_ref(void *obj, int thread_id)
+int paygo_inc(void *obj, int thread_id)
 {
 	int ret;
 	int cpu;
@@ -434,9 +438,9 @@ int paygo_ref(void *obj, int thread_id)
 	put_cpu();
 	return ret;
 }
-EXPORT_SYMBOL(paygo_ref);
+EXPORT_SYMBOL(paygo_inc);
 
-int paygo_unref(void *obj, int thread_id)
+int paygo_dec(void *obj, int thread_id)
 {
 	int cpu;
 	int anchor_cpu;
@@ -452,7 +456,7 @@ int paygo_unref(void *obj, int thread_id)
 		// All unref operations are called after the ref operation is called.
 		// Therefore, there should never be a situation where there is no entry when doing an unref.
 		if (!entry) {
-			pr_info("paygo_unref: NULL return ERR!!!\n");
+			pr_info("paygo_dec: NULL return ERR!!!\n");
 			put_cpu();
 			return 0;
 		}
@@ -466,7 +470,7 @@ int paygo_unref(void *obj, int thread_id)
 	put_cpu();
 	return 0;
 }
-EXPORT_SYMBOL(paygo_unref);
+EXPORT_SYMBOL(paygo_dec);
 
 bool paygo_read(void *obj)
 {
@@ -676,9 +680,9 @@ static int thread_fn(void *data)
 	td = *(struct thread_data *)data;
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
-		paygo_ref(objs[i % NOBJS], td.thread_id);
+		paygo_inc(objs[i % NOBJS], td.thread_id);
 		msleep(0);
-		paygo_unref(objs[i % NOBJS], td.thread_id);
+		paygo_dec(objs[i % NOBJS], td.thread_id);
 
 		//pr_info("%d\n", paygo_read(true_check));
 		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
