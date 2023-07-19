@@ -112,10 +112,7 @@ These functions are used for anchor information to put and get.
 This function is used in paygo_dec when decrement other cpu's hashtable entry.
 
 6. dec_other_entry
--------------------------------------------------------
-test function
 
-7. traverse_paygo
 */
 
 /**
@@ -188,16 +185,6 @@ static int unrecord_anchor(int thread_id);
  */
 static void dec_other_entry(void *obj, int cpu);
 
-/**
- * traverse_paygo
- *
- * Context: This function must run alone. 
- *
- * Traverse hashtables and print about all of the per-cpu hashtable's entries.
- *
- */
-static void traverse_paygo(void);
-
 //////////////////////////////////////////////////////////////////////////////////////////
 
 static int __init start_module(void)
@@ -256,7 +243,8 @@ static void __exit end_module(void)
 	traverse_paygo();
 
 	for (i = 0; i < NOBJS; i++) {
-		pr_info("%d\n", paygo_read(objs[i]));
+		// it must print only true in this step.
+		pr_info("READALL: %d\n", paygo_read(objs[i]));
 	}
 
 	// free the test objs
@@ -487,9 +475,12 @@ bool paygo_read(void *obj)
 
 	for_each_possible_cpu(cur_cpu) {
 		p = per_cpu(paygo_table_ptr, cur_cpu);
+		// self-checking
 		if (unlikely(mycpu == cur_cpu)) {
 			entry = find_hash(obj);
 			if (entry) {
+				// There can be a dec_other operation.
+				// Therefore, we need to check total count at this time.
 				if (entry->local_counter +
 					    atomic_read(
 						    &(entry->anchor_counter)) >
@@ -500,7 +491,7 @@ bool paygo_read(void *obj)
 			}
 			continue;
 		}
-		// other cpu
+		// check other cpu
 		else {
 			// Unlike dec_other, in paygo_read there is no 100% certainty
 			// that there is an entry in the hashtable (or in the overflow list).
@@ -609,7 +600,7 @@ retry:
 	}
 }
 
-static void traverse_paygo(void)
+void traverse_paygo(void)
 {
 	struct paygo *p;
 	struct paygo_entry *entry;
@@ -669,29 +660,25 @@ static void traverse_paygo(void)
 		pr_info("THREAD%d did %d jobs\n", i, thread_ops[i]);
 	}
 }
+EXPORT_SYMBOL(traverse_paygo);
 
 static int thread_fn(void *data)
 {
-	void *true_check;
 	int i;
 	struct thread_data td;
 	i = 0;
-	true_check = kmalloc(sizeof(int), GFP_KERNEL);
 	td = *(struct thread_data *)data;
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
 		paygo_inc(objs[i % NOBJS], td.thread_id);
 		msleep(0);
 		paygo_dec(objs[i % NOBJS], td.thread_id);
-
-		//pr_info("%d\n", paygo_read(true_check));
 		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
 		i++;
 	}
 	thread_ops[td.thread_id] = i;
 	pr_info("thread end!\n");
 	atomic_inc(&thread_done);
-	kfree(true_check);
 	return 0;
 }
 

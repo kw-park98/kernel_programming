@@ -60,4 +60,14 @@ int paygo_dec(void *obj, int thread_id);
  */
 bool paygo_read(void *obj);
 
+/**
+ * traverse_paygo
+ *
+ * Context: This function must run alone. 
+ *
+ * Traverse hashtables and print about all of the per-cpu hashtable's entries.
+ *
+ */
+void traverse_paygo(void);
+
 #endif // __PAYGO_H__
