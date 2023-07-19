@@ -32,13 +32,13 @@
 // custom number
 
 // size of the per-cpu hashtable
-#define TABLESIZE (32)
+#define TABLESIZE (4)
 
 // hash function shift bits
 #define HASHSHIFT (11)
 
 // the number of test kthread
-#define NTHREAD (10)
+#define NTHREAD (8)
 
 // the number of objs to test
 #define NOBJS (10)
@@ -47,6 +47,7 @@
 // for thread
 struct anchor_info {
 	int cpu;
+	void *obj;
 	struct list_head list;
 };
 
@@ -77,6 +78,16 @@ struct paygo_entry {
 	int local_counter;
 	atomic_t anchor_counter;
 	struct list_head list;
+
+
+	// x,y are used for debug
+	// x means local inc to the obj
+	// y means local dec to the obj
+
+	// (x + y) = entry->local_counter (always)
+	// (x + y) + anchor_counter = 0 when the program end (i.e. After all inc and dec pairs have been terminated)
+	int x;
+	int y;
 } ____cacheline_aligned_in_smp;
 
 struct overflow {
@@ -287,6 +298,7 @@ static unsigned long hash_function(const void *obj)
 	unsigned long hash;
 	hash = hash_64((unsigned long)obj, HASHSHIFT);
 	ret = hash % TABLESIZE;
+	ret = TABLESIZE - 1;
 	return ret;
 }
 
@@ -306,6 +318,9 @@ static int push_hash(void *obj)
 			entry->obj = obj;
 			entry->local_counter = 1;
 			atomic_set(&entry->anchor_counter, 0);
+
+			entry->x = 1;
+			entry->y = 0;
 		}
 		return 0;
 	}
@@ -323,6 +338,9 @@ static int push_hash(void *obj)
 			new_entry->obj = obj;
 			new_entry->local_counter = 1;
 			atomic_set(&new_entry->anchor_counter, 0);
+
+			new_entry->x = 1;
+			new_entry->y = 0;
 		}
 
 		spin_lock(&ovfl->lock);
@@ -377,6 +395,8 @@ redo:
 				entry->obj = NULL;
 				entry->local_counter = 0;
 				atomic_set(&(entry->anchor_counter), 0);
+				entry->x = 0;
+				entry->y = 0;
 
 				spin_unlock(&ovfl->lock);
 				return NULL;
@@ -414,6 +434,7 @@ int paygo_inc(void *obj, int thread_id)
 	// if there is an entry!
 	if (entry) {
 		entry->local_counter += 1;
+		entry->x += 1;
 		record_anchor(thread_id, cpu, obj);
 		ret = 0;
 		put_cpu();
@@ -449,6 +470,7 @@ int paygo_dec(void *obj, int thread_id)
 			return 0;
 		}
 		entry->local_counter -= 1;
+		entry->y -= 1;
 	}
 	// global operation
 	else {
@@ -549,21 +571,30 @@ static void record_anchor(int thread_id, int cpu, void *obj)
 		return;
 	}
 	info->cpu = cpu;
+	info->obj = obj;
 	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
 }
 
 static int unrecord_anchor(int thread_id, void *obj)
 {
-	int cpu;
+	struct anchor_info *info;
+	int cpu = -1;
+
+	list_for_each_entry_reverse(
+		info, &thread_datas[thread_id].anchor_info_list, list) {
+		if (info->obj == obj) {
+			cpu = info->cpu;
+			list_del(&info->list);
+			kfree(info);
+			break;
+		}
+	}
+
 	// Since all of the unref operations are always followed by ref operations,
 	// there is no situation where anchor information list is empty.
-	struct anchor_info *last_info;
-	last_info = list_last_entry(&thread_datas[thread_id].anchor_info_list,
-				    struct anchor_info, list);
-
-	cpu = last_info->cpu;
-	list_del(&last_info->list);
-	kfree(last_info);
+	if (cpu == -1) {
+		pr_err("Failed to find anchor_info with given obj\n");
+	}
 
 	return cpu;
 }
@@ -620,32 +651,35 @@ void traverse_paygo(void)
 			entry = &p->entries[i];
 			if (entry->obj) {
 				printk(KERN_INFO
-				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d (x=%d y=%d)\n",
 				       i, entry->obj, entry->local_counter,
 				       atomic_read(&entry->anchor_counter),
 				       entry->local_counter +
 					       atomic_read(
-						       &entry->anchor_counter));
+						       &entry->anchor_counter),
+				       entry->x, entry->y);
 			} else {
 				printk(KERN_INFO
-				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       "  Entry %d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d (x=%d y=%d)\n",
 				       i, entry->obj, entry->local_counter,
 				       atomic_read(&entry->anchor_counter),
 				       entry->local_counter +
 					       atomic_read(
-						       &entry->anchor_counter));
+						       &entry->anchor_counter),
+				       entry->x, entry->y);
 			}
 			list_for_each(cur, &p->overflow_lists[i].head) {
 				entry = list_entry(cur, struct paygo_entry,
 						   list);
 				printk(KERN_INFO
-				       "  \tOverflow Entry %d-%d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d\n",
+				       "  \tOverflow Entry %d-%d: obj=%p, local_counter=%d, anchor_counter=%d total_count=%d (x=%d y=%d)\n",
 				       i, ovfl_length, entry->obj,
 				       entry->local_counter,
 				       atomic_read(&entry->anchor_counter),
 				       entry->local_counter +
 					       atomic_read(
-						       &entry->anchor_counter));
+						       &entry->anchor_counter),
+				       entry->x, entry->y);
 				ovfl_length++;
 			}
 		}
@@ -671,11 +705,19 @@ static int thread_fn(void *data)
 	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
 		paygo_inc(objs[i % NOBJS], td.thread_id);
-		//paygo_inc(objs[(i + 1) % NOBJS], td.thread_id);
 		msleep(0);
+		paygo_inc(objs[(i + 1) % NOBJS], td.thread_id);
+		msleep(0);
+		paygo_inc(objs[(i + 2) % NOBJS], td.thread_id);
+		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+		msleep(0);
+		paygo_dec(objs[(i + 2) % NOBJS], td.thread_id);
 		paygo_dec(objs[i % NOBJS], td.thread_id);
-		//paygo_dec(objs[(i + 1) % NOBJS], td.thread_id);
-		//pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+		msleep(0);
+		paygo_dec(objs[(i + 1) % NOBJS], td.thread_id);
+		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+
 		i++;
 	}
 	thread_ops[td.thread_id] = i;
