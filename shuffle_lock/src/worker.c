@@ -44,9 +44,9 @@ void worker_setup(void)
 void worker_routine(void)
 {
 	/* Change below */
-	queued_spin_lock(&s_lock);
-	counter++;
-	queued_spin_unlock(&s_lock);
+	shfl_spin_lock(&s_lock);
+	atomic_long_inc(&counter);
+	shfl_spin_unlock(&s_lock);
 	// atomic_long_inc(&counter);
 }
 

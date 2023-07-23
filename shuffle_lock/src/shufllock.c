@@ -12,23 +12,6 @@
 #define S_PARKED 2
 #define S_SPINNING 3
 
-struct spinlock {
-	struct spinlock *next;
-	union {
-		int locked; /* 1 if lock acquired */
-		struct {
-			u8 lstatus;
-			u8 sleader;
-			u16 wcount;
-		};
-	};
-	int count; /* nesting count */
-
-	int nid;
-	int cid;
-	struct spinlock *last_visited;
-};
-
 #define MAX_NODES 4
 
 static DEFINE_PER_CPU_ALIGNED(struct mcs_spinlock, mcs_nodes[MAX_NODES]);
@@ -52,6 +35,8 @@ static inline void set_waitcount(struct spinlock *node, int count)
 {
 	smp_store_release(&node->wcount, count);
 }
+
+#define _Q_LOCKED_PENDING_MASK (_Q_LOCKED_MASK | _Q_PENDING_MASK)
 
 /*
  * xorshift function for generating pseudo-random numbers:
@@ -214,7 +199,36 @@ out:
 	}
 }
 
-void queued_spin_lock_slowpath(struct spinlock *lock, u32 val)
+/*
+ * Generate the native code for queued_spin_unlock_slowpath(); provide NOPs for
+ * all the PV callbacks.
+ */
+
+static __always_inline void __pv_init_node(struct mcs_spinlock *node)
+{
+}
+static __always_inline void __pv_wait_node(struct mcs_spinlock *node,
+					   struct mcs_spinlock *prev)
+{
+}
+static __always_inline void __pv_kick_node(struct qspinlock *lock,
+					   struct mcs_spinlock *node)
+{
+}
+static __always_inline u32 __pv_wait_head_or_lock(struct qspinlock *lock,
+						  struct mcs_spinlock *node)
+{
+	return 0;
+}
+
+#define pv_enabled() false
+
+#define pv_init_node __pv_init_node
+#define pv_wait_node __pv_wait_node
+#define pv_kick_node __pv_kick_node
+#define pv_wait_head_or_lock __pv_wait_head_or_lock
+
+void shfl_spin_lock_slowpath(struct spinlock *lock, u32 val)
 {
 	struct spinlock *prev, *next, *node;
 	u32 old, tail;
@@ -451,24 +465,24 @@ release:
 	 */
 	__this_cpu_dec(mcs_nodes[0].count);
 }
-EXPORT_SYMBOL(queued_spin_lock_slowpath);
+EXPORT_SYMBOL(shfl_spin_lock_slowpath);
 
-static void queued_spin_lock(struct spinlock *lock)
+static void shfl_spin_lock(struct spinlock *lock)
 {
 	int val = 0;
 
 	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
 		return;
 
-	queued_spin_lock_slowpath(lock, val);
+	shfl_spin_lock_slowpath(lock, val);
 }
-EXPORT_SYMBOL(queued_spin_lock);
+EXPORT_SYMBOL(shfl_spin_lock);
 
-static void queued_spin_unlock(struct spinlock *lock)
+static void shfl_spin_unlock(struct spinlock *lock)
 {
 	smp_store_release(&lock->locked, 0);
 }
-EXPORT_SYMBOL(queued_spin_unlock);
+EXPORT_SYMBOL(shfl_spin_unlock);
 
 MODULE_AUTHOR("Jeonghoon Lee");
 MODULE_LICENSE("GPL");
