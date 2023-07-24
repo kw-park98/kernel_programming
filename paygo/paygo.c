@@ -11,6 +11,7 @@
 #include <linux/slab.h>
 #include <asm/atomic.h>
 #include <linux/hash.h>
+#include <linux/sched.h>
 #include "paygo.h"
 
 // TODO
@@ -44,16 +45,8 @@
 #define NOBJS (10)
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// for thread
-struct anchor_info {
-	int cpu;
-	void *obj;
-	struct list_head list;
-};
-
 struct thread_data {
 	int thread_id;
-	struct list_head anchor_info_list;
 };
 
 static int thread_fn(void *data);
@@ -298,7 +291,6 @@ static unsigned long hash_function(const void *obj)
 	unsigned long hash;
 	hash = hash_64((unsigned long)obj, HASHSHIFT);
 	ret = hash % TABLESIZE;
-	ret = TABLESIZE - 1;
 	return ret;
 }
 
@@ -572,7 +564,7 @@ static void record_anchor(int thread_id, int cpu, void *obj)
 	}
 	info->cpu = cpu;
 	info->obj = obj;
-	list_add_tail(&info->list, &thread_datas[thread_id].anchor_info_list);
+	list_add_tail(&info->list, &current->anchor_info_list);
 }
 
 static int unrecord_anchor(int thread_id, void *obj)
@@ -581,7 +573,7 @@ static int unrecord_anchor(int thread_id, void *obj)
 	int cpu = -1;
 
 	list_for_each_entry_reverse(
-		info, &thread_datas[thread_id].anchor_info_list, list) {
+		info, &current->anchor_info_list, list) {
 		if (info->obj == obj) {
 			cpu = info->cpu;
 			list_del(&info->list);
@@ -702,21 +694,15 @@ static int thread_fn(void *data)
 	struct thread_data td;
 	i = 0;
 	td = *(struct thread_data *)data;
-	INIT_LIST_HEAD(&thread_datas[td.thread_id].anchor_info_list);
 	while (!kthread_should_stop()) {
 		paygo_inc(objs[i % NOBJS], td.thread_id);
+		paygo_inc(objs[(i+1) % NOBJS], td.thread_id);
+		paygo_inc(objs[(i+2) % NOBJS], td.thread_id);
 		msleep(0);
-		paygo_inc(objs[(i + 1) % NOBJS], td.thread_id);
-		msleep(0);
-		paygo_inc(objs[(i + 2) % NOBJS], td.thread_id);
-		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
-		msleep(0);
-		paygo_dec(objs[(i + 2) % NOBJS], td.thread_id);
+		paygo_dec(objs[(i+1) % NOBJS], td.thread_id);
+		pr_info("%d\n", paygo_read(objs[(i+1) % NOBJS]));
 		paygo_dec(objs[i % NOBJS], td.thread_id);
-		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
-		msleep(0);
-		paygo_dec(objs[(i + 1) % NOBJS], td.thread_id);
-		pr_info("%d\n", paygo_read(objs[i % NOBJS]));
+		paygo_dec(objs[(i+2) % NOBJS], td.thread_id);
 
 		i++;
 	}
