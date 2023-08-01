@@ -16,17 +16,10 @@
 
 // TODO
 //
-// 0. Sometimes the total count value of a hashtable entry is left at 1
-//		=> Fixed. (retry dec_other when the processor can not find the obj in the overflow list)
+// 0. change the code that init(kmalloc -> DEFINE_PERCPU)
 //
 // 1. Do we need to initialize hashtable entry's list every time we create a null entry? ( INIT_LIST_HEAD(&(entry->list)); )
 //
-// 2. Implement paygo_read
-//
-// 3. Precision testing of paygo operations
-//
-// 4. Should the processor who gets the overflow lock clean overflow list?
-//		=> Reflected. (retry when the overflow list is not empty)
 //
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -700,13 +693,16 @@ static int thread_fn(void *data)
 		paygo_inc(objs[(i+2) % NOBJS], td.thread_id);
 		msleep(0);
 		paygo_dec(objs[(i+1) % NOBJS], td.thread_id);
-		pr_info("%d\n", paygo_read(objs[(i+1) % NOBJS]));
+		//pr_info("%d\n", paygo_read(objs[(i+1) % NOBJS]));
 		paygo_dec(objs[i % NOBJS], td.thread_id);
 		paygo_dec(objs[(i+2) % NOBJS], td.thread_id);
 
 		i++;
 	}
 	thread_ops[td.thread_id] = i;
+	if(list_empty(&current->anchor_info_list)) {
+		pr_info("thread[%d]'s anchor info list is empty!\n", td.thread_id);
+	}
 	pr_info("thread end!\n");
 	atomic_inc(&thread_done);
 	return 0;
