@@ -156,7 +156,7 @@ static struct paygo_entry *find_hash(void *obj);
  * Record the CPU ID of the processor on which PAYGO_REF was executed to the tast struct. 
  *
  */
-static void record_anchor(int thread_id, int cpu, void *obj);
+static void record_anchor(int cpu, void *obj);
 
 /**
  * unrecord_anchor
@@ -168,7 +168,7 @@ static void record_anchor(int thread_id, int cpu, void *obj);
  * Get the CPU ID of the processor on which PAYGO_REF was *LAST* executed.
  *
  */
-static int unrecord_anchor(int thread_id, void *obj);
+static int unrecord_anchor(void *obj);
 
 /**
  * dec_other_entry
@@ -406,7 +406,7 @@ redo:
 	return NULL;
 }
 
-int paygo_inc(void *obj, int thread_id)
+int paygo_inc(void *obj)
 {
 	int ret;
 	int cpu;
@@ -420,7 +420,7 @@ int paygo_inc(void *obj, int thread_id)
 	if (entry) {
 		entry->local_counter += 1;
 		entry->x += 1;
-		record_anchor(thread_id, cpu, obj);
+		record_anchor(cpu, obj);
 		ret = 0;
 		put_cpu();
 		return ret;
@@ -428,20 +428,20 @@ int paygo_inc(void *obj, int thread_id)
 
 	// if there isn't
 	ret = push_hash(obj);
-	record_anchor(thread_id, cpu, obj);
+	record_anchor(cpu, obj);
 	put_cpu();
 	return ret;
 }
 EXPORT_SYMBOL(paygo_inc);
 
-int paygo_dec(void *obj, int thread_id)
+int paygo_dec(void *obj)
 {
 	int cpu;
 	int anchor_cpu;
 	struct paygo_entry *entry;
 	cpu = get_cpu();
 
-	anchor_cpu = unrecord_anchor(thread_id, obj);
+	anchor_cpu = unrecord_anchor(obj);
 
 	// local operation
 	if (likely(cpu == anchor_cpu)) {
@@ -547,7 +547,7 @@ bool paygo_read(void *obj)
 }
 EXPORT_SYMBOL(paygo_read);
 
-static void record_anchor(int thread_id, int cpu, void *obj)
+static void record_anchor(int cpu, void *obj)
 {
 	struct anchor_info *info;
 	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
@@ -560,7 +560,7 @@ static void record_anchor(int thread_id, int cpu, void *obj)
 	list_add_tail(&info->list, &current->anchor_info_list);
 }
 
-static int unrecord_anchor(int thread_id, void *obj)
+static int unrecord_anchor(void *obj)
 {
 	struct anchor_info *info;
 	int cpu = -1;
@@ -688,14 +688,14 @@ static int thread_fn(void *data)
 	i = 0;
 	td = *(struct thread_data *)data;
 	while (!kthread_should_stop()) {
-		paygo_inc(objs[i % NOBJS], td.thread_id);
-		paygo_inc(objs[(i+1) % NOBJS], td.thread_id);
-		paygo_inc(objs[(i+2) % NOBJS], td.thread_id);
+		paygo_inc(objs[i % NOBJS]);
+		paygo_inc(objs[(i+1) % NOBJS]);
+		paygo_inc(objs[(i+2) % NOBJS]);
 		msleep(0);
-		paygo_dec(objs[(i+1) % NOBJS], td.thread_id);
+		paygo_dec(objs[(i+1) % NOBJS]);
 		//pr_info("%d\n", paygo_read(objs[(i+1) % NOBJS]));
-		paygo_dec(objs[i % NOBJS], td.thread_id);
-		paygo_dec(objs[(i+2) % NOBJS], td.thread_id);
+		paygo_dec(objs[i % NOBJS]);
+		paygo_dec(objs[(i+2) % NOBJS]);
 
 		i++;
 	}

@@ -34,7 +34,7 @@ void init_paygo_table(void);
  * increment reference count of the object.
  *
  */
-int paygo_inc(void *obj, int thread_id);
+int paygo_inc(void *obj);
 
 /**
  * paygo_unref
@@ -48,7 +48,7 @@ int paygo_inc(void *obj, int thread_id);
  * decrement reference count of the object.
  *
  */
-int paygo_dec(void *obj, int thread_id);
+int paygo_dec(void *obj);
 
 /**
  * paygo_read
