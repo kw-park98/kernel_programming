@@ -41,7 +41,7 @@ static asmlinkage long our_sys_openat(const struct pt_regs *regs)
 	filename[i] = '\0';
 	flags = (int)regs->dx;
 	mode = (int)regs->cx;
-	pr_info("[%d] open(\"%s\", %d, %d)", current->pid, filename, flags,
+	pr_info("[%d] sys_open(\"%s\", %d, %d)", current->pid, filename, flags,
 		mode);
 
 orig_call:
