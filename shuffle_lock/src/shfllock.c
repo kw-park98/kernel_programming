@@ -55,7 +55,7 @@ void shfl_spin_lock(shfllock_t *lock)
 
 		WRITE_ONCE(next, node->next);
 	}
-	WRITE_ONCE(next->status, S_READY);
+	WRITE_ONCE(next->lstatus, S_READY);
 }
 
 void shfl_spin_unlock(shfllock_t *lock)
@@ -95,7 +95,7 @@ void shuffle_waiters(shfllock_t *lock, qnode_t *node, bool vnext_waiter)
 	barrier();
 
 	if (READ_ONCE(batch) == 0)
-		WRITE_ONCE(node->batch, ++batch);
+		WRITE_ONCE(node->wcount, ++batch);
 
 	WRITE_ONCE(node->sleader, false);
 	if (READ_ONCE(batch) >= MAX_SHUFFLES)
@@ -118,7 +118,7 @@ void shuffle_waiters(shfllock_t *lock, qnode_t *node, bool vnext_waiter)
 				if (!READ_ONCE(next))
 					break;
 
-				WRITE_ONCE(curr->batch, ++batch);
+				WRITE_ONCE(curr->wcount, ++batch);
 				WRITE_ONCE(prev->next, next);
 				WRITE_ONCE(curr->next, last->next);
 				WRITE_ONCE(last->next, curr);
