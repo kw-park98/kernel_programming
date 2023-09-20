@@ -11,8 +11,7 @@ void shfl_spin_lock(shfllock_t *lock)
 
 	preempt_disable();
 
-	if (atomic_cmpxchg(&lock->val, _S_UNLOCK_VAL, _S_LOCKED_VAL) ==
-	    _S_UNLOCK_VAL)
+	if (cmpxchg(&lock->val, _S_UNLOCK_VAL, _S_LOCKED_VAL) == _S_UNLOCK_VAL)
 		return;
 
 	node = this_cpu_ptr(&qnode);
@@ -23,11 +22,11 @@ void shfl_spin_lock(shfllock_t *lock)
 	WRITE_ONCE(node->next, NULL);
 	WRITE_ONCE(node->cid, 1); /* TODO: change to random. */
 
-	prev = atomic_xchg(&lock->tail, node);
+	prev = xchg(&lock->tail, node);
 	if (prev)
 		spin_until_very_next_waiter(lock, prev, node);
 	else
-		atomic_xchg(&lock->no_stealing, true);
+		xchg(&lock->no_stealing, true);
 
 	for (;;) {
 		if (READ_ONCE(node->wcount) == 0 || READ_ONCE(node->sleader)) {
@@ -38,15 +37,15 @@ void shfl_spin_lock(shfllock_t *lock)
 			continue;
 		}
 
-		if (atomic_cmpxchg(&lock->locked, _S_UNLOCK_VAL,
-				   _S_LOCKED_VAL) == _S_UNLOCK_VAL)
+		if (cmpxchg(&lock->locked, _S_UNLOCK_VAL, _S_LOCKED_VAL) ==
+		    _S_UNLOCK_VAL)
 			break;
 	}
 
 	next = READ_ONCE(node->next);
 	if (!next) {
-		if (atomic_cmpxchg(&lock->tail, node, NULL) == node) {
-			atomic_cmpxchg(&lock->no_stealing, true, false);
+		if (cmpxchg(&lock->tail, node, NULL) == node) {
+			cmpxchg(&lock->no_stealing, true, false);
 			return;
 		}
 
@@ -70,7 +69,7 @@ void spin_until_very_next_waiter(shfllock_t *lock, qnode_t *prev, qnode_t *curr)
 	WRITE_ONCE(prev->next, curr);
 
 	for (;;) {
-		if (READ_ONCE(curr->status) == S_READY)
+		if (READ_ONCE(curr->lstatus) == S_READY)
 			return;
 
 		if (READ_ONCE(curr->sleader))
@@ -130,7 +129,7 @@ void shuffle_waiters(shfllock_t *lock, qnode_t *node, bool vnext_waiter)
 
 		if ((vnext_waiter &&
 		     READ_ONCE(lock->locked) == _S_UNLOCK_VAL) ||
-		    (!vnext_waiter && READ_ONCE(node->status) == S_READY))
+		    (!vnext_waiter && READ_ONCE(node->lstatus) == S_READY))
 			break;
 	}
 
