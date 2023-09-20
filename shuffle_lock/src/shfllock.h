@@ -11,49 +11,47 @@
 #define S_PARKED 2
 #define S_SPINNING 3
 
-typedef struct shfllock {
-	u8 locked; /* 1 if lock acquired */
-	u8 no_stealing;
-
-	u8 reserved[2];
-
-	struct qnode *tail;
+typedef struct qspinlock_s {
+	union {
+		atomic_t val;
+		struct {
+			u8 locked;
+			u8 no_stealing;
+		};
+	};
+	qnode_t *tail;
 } shfllock_t;
 
-struct qnode {
-	u8 shuffler;
-	u8 node_id;
-	u8 status;
+typedef struct mcs_spinlock_s {
+	qnode_t *next;
+	union {
+		int locked;
+		struct {
+			u8 lstatus;
+			u8 sleader;
+			u16 wcount;
+		}
+	};
 
-	u8 reserved[1];
+	int cid;
+	struct mcs_spinlock *last_visited;
+} qnode_t;
 
-	int batch;
+void shfl_spin_lock(shfllock_t *lock);
 
-	struct qnode *next;
-};
+void shfl_spin_unlock(shfllock_t *lock);
 
-void shfl_spin_lock(struct shfllock *lock);
+void spin_until_very_next_waiter(shfllock_t *lock, qnode_t *prev,
+				 qnode_t *curr);
 
-void shfl_spin_unlock(struct shfllock *lock);
-
-void spin_until_very_next_waiter(struct shfllock *lock, struct qnode *prev,
-				 struct qnode *curr);
-
-void shuffle_waiters(struct shfllock *lock, struct qnode *node,
-		     bool vnext_waiter);
+void shuffle_waiters(shfllock_t *lock, qnode_t *node, bool vnext_waiter);
 
 #define _S_UNLOCK_VAL (0)
 #define _S_LOCKED_VAL (1U)
 
-#ifdef ALLOW_STEALING
-#define _S_DEFAULT_NO_STEALING 0
-#else
-#define _S_DEFAULT_NO_STEALING 1
-#endif
-
-#define __SHFL_LOCK_INITIALIZER(lockname)                          \
-	{                                                          \
-		.locked = 0, .no_stealing = _S_DEFAULT_NO_STEALING \
+#define __SHFL_LOCK_INITIALIZER(lockname) \
+	{                                 \
+		.val = 0                  \
 	}
 
 #define __SHFL_LOCK_UNLOCKED(lockname) \
